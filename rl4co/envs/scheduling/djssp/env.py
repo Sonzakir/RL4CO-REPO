@@ -187,9 +187,9 @@ class DJSSPEnv(FJSPEnv):
         ).transpose(1, 2)
         action_mask.add_(next_ops_proc_times == 0)
 
-        #  TODO exclude jobs that are not arrived yet
+        # TODO exclude jobs that are not arrived yet
         # td["job_arrival_times"][batch_no][arr_time_job1, arr_time_job2, ........]
-        td["time"] = torch.Tensor([42, 42, 42])
+        # td["time"] = torch.Tensor([42, 42, 42])
         for b in range(batch_size):
            for job_idx in range(self.num_jobs):
                boo = td["job_arrival_times"][b][job_idx].le(td["time"])
