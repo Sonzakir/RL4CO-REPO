@@ -1,7 +1,9 @@
 import os
 
 from rl4co.envs.scheduling.djssp.generator import DJSSPGenerator
+from rl4co.envs.scheduling.fjsp import INIT_FINISH
 from rl4co.envs.scheduling.fjsp.env import FJSPEnv
+from rl4co.envs.scheduling.fjsp.utils import calc_lower_bound
 from rl4co.utils.ops import gather_by_index
 from einops import einsum, reduce
 import torch
@@ -61,13 +63,64 @@ class DJSSPEnv(FJSPEnv):
         mask_no_ops: bool = True,
         **kwargs,
     ):
-        #if generator is None:
-        #    if generator_params.get("file_path", None) is not None:
-        #        generator = DJSPGenerator(**generator_params)
-        #    else:
-        #        generator = DJSPGenerator(**generator_params)
+        if generator is None:
+            # TODO DJSSPFILE GENERATOR
+            if generator_params.get("file_path", None) is not None:
+                generator = DJSSPGenerator(**generator_params)
+            else:
+                generator = DJSSPGenerator(**generator_params)
 
         super().__init__(generator, generator_params, mask_no_ops, **kwargs)
+
+
+    #FJSP
+    def _reset(self, td: TensorDict = None, batch_size=None) -> TensorDict:
+        self.set_instance_params(td)
+
+        td_reset = td.clone()
+
+        td_reset, n_ops_max = self._decode_graph_structure(td_reset)
+
+        # schedule
+        start_op_per_job = td_reset["start_op_per_job"]
+        start_times = torch.zeros((*batch_size, n_ops_max))
+        finish_times = torch.full((*batch_size, n_ops_max), INIT_FINISH)
+        ma_assignment = torch.zeros((*batch_size, self.num_mas, n_ops_max))
+
+        # reset feature space
+        busy_until = torch.zeros((*batch_size, self.num_mas))
+        # (bs, ma, ops)
+        ops_ma_adj = (td_reset["proc_times"] > 0).to(torch.float32)
+        # (bs, ops)
+        num_eligible = torch.sum(ops_ma_adj, dim=1)
+        #TODO: Dynamic Job Arrivals
+        # TODO: machine beakdowns
+        #TODO: stochastic processing times
+
+        td_reset = td_reset.update(
+            {
+                "start_times": start_times,
+                "finish_times": finish_times,
+                "ma_assignment": ma_assignment,
+                "busy_until": busy_until,
+                "num_eligible": num_eligible,
+                "next_op": start_op_per_job.clone().to(torch.int64),
+                "ops_ma_adj": ops_ma_adj,
+                "op_scheduled": torch.full((*batch_size, n_ops_max), False),
+                "job_in_process": torch.full((*batch_size, self.num_jobs), False),
+                "reward": torch.zeros((*batch_size,), dtype=torch.float32),
+                "time": torch.zeros((*batch_size,)),
+                "job_done": torch.full((*batch_size, self.num_jobs), False),
+                "done": torch.full((*batch_size, 1), False),
+            },
+        )
+
+        td_reset.set("action_mask", self.get_action_mask(td_reset))
+        # add additional features to tensordict
+        td_reset["lbs"] = calc_lower_bound(td_reset)
+        td_reset = self._get_features(td_reset)
+
+        return td_reset
 
     def _get_features(self, td):
         td = super()._get_features(td)
@@ -119,9 +172,9 @@ class DJSSPEnv(FJSPEnv):
             td.device
         )
 
-        # TODO:mask jobs that are not arrived yet
         # mask jobs that are done already
         action_mask.add_(td["job_done"].unsqueeze(2))
+
         # as well as jobs that are currently processed
         action_mask.add_(td["job_in_process"].unsqueeze(2))
 
@@ -134,11 +187,16 @@ class DJSSPEnv(FJSPEnv):
         ).transpose(1, 2)
         action_mask.add_(next_ops_proc_times == 0)
 
-        #TODO: check if arrival time of the job x >= td["time"]
-        # if yes [x ,( m0, ...., #machines)] = for each element and true yap
-        # if no [x ,( m0, ...., #machines)] = for each element and false yap
-        # bu get_machine_availability'nin output'unu anlamak icin
-        # Untitled.ipynb'ye bakabilirsin
+        #  TODO exclude jobs that are not arrived yet
+        # td["job_arrival_times"][batch_no][arr_time_job1, arr_time_job2, ........]
+        td["time"] = torch.Tensor([42, 42, 42])
+        for b in range(batch_size):
+           for job_idx in range(self.num_jobs):
+               boo = td["job_arrival_times"][b][job_idx].le(td["time"])
+               if(not boo[b].item()):
+                   action_mask[b][job_idx].fill_(True) # TODO: check the logic again-here can be True too
+                   print(f"IN BATCH {b} JOB WITH ID {job_idx} not arrived yet")
+                   #action_mask[b][job_idx] = 0
         return action_mask
 
     def _translate_action(self, td):
