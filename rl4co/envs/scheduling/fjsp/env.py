@@ -169,6 +169,7 @@ class FJSPEnv(EnvBase):
 
         # reset feature space
         busy_until = torch.zeros((*batch_size, self.num_mas))
+
         # (bs, ma, ops)
         ops_ma_adj = (td_reset["proc_times"] > 0).to(torch.float32)
         # (bs, ops)

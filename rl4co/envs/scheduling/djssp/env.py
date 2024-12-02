@@ -17,7 +17,7 @@ class DJSSPEnv(FJSPEnv):
     At each step, the agent chooses a job. The operation to be processed next for the selected job is
     then executed on the associated machine. The reward is 0 unless the agent scheduled all operations of all jobs.
     In that case, the reward is (-)makespan of the schedule: maximizing the reward is equivalent to minimizing the makespan.
-    NOTE: The JSSP is a special case of the FJSP, when the number of eligible machines per operation is equal to one for all
+    NOTE: The DJSSP is a special case of the FJSP, when the number of eligible machines per operation is equal to one for all
     operations. Therefore, this environment is a subclass of the FJSP environment.
     Observations:
         - time: current time
@@ -87,14 +87,13 @@ class DJSSPEnv(FJSPEnv):
         finish_times = torch.full((*batch_size, n_ops_max), INIT_FINISH)
         ma_assignment = torch.zeros((*batch_size, self.num_mas, n_ops_max))
 
+        # TODO: for djssp -> i can change the busy_until initialization in here
         # reset feature space
         busy_until = torch.zeros((*batch_size, self.num_mas))
         # (bs, ma, ops)
         ops_ma_adj = (td_reset["proc_times"] > 0).to(torch.float32)
         # (bs, ops)
         num_eligible = torch.sum(ops_ma_adj, dim=1)
-        #TODO: Dynamic Job Arrivals
-        # TODO: machine beakdowns
         #TODO: stochastic processing times
 
         td_reset = td_reset.update(
@@ -121,6 +120,42 @@ class DJSSPEnv(FJSPEnv):
         td_reset = self._get_features(td_reset)
 
         return td_reset
+
+   # # td["time"] = torch.Tensor([2.182248115539551, 2.182248115539551, 2.182248115539551])
+   #  batch_idx = 0
+   #  for bs in range(batch_idx + 1):
+   #      for machine_idx in range(env.num_mas):
+   #          m_idx_breakdowns = td["machine_breakdowns"][bs - 1][machine_idx]
+   #          for breakdown_no in range(len(m_idx_breakdowns)):
+   #
+   #              if m_idx_breakdowns[breakdown_no]["TIME"] == td["time"][0]:
+   #                  print(2.182248115539551)
+   #                  print(f"Machine {machine_idx} - with TIME {m_idx_breakdowns[breakdown_no]['TIME']} ")
+   #                  print(td["busy_until"][bs][machine_idx])
+   #                  td["busy_until"][bs][machine_idx] = td["time"][0] + m_idx_breakdowns[breakdown_no]["DURATION"]
+   #                  print(td["busy_until"][bs][machine_idx])
+
+    # TODO -> here we can take td as an input and we can get the batch_size from it
+    # WARNING: Maybe here we have to clone the tensordict
+    def _check_machine_breakdowns(self, td: TensorDict ):
+        td["time"] = torch.Tensor([3.000108480453491, 0, 0])
+        batch_size = td.size(0)
+        # breakdown of all machines in all bathces
+        machine_breakdowns = td["machine_breakdowns"]
+        for batch_id in range(batch_size):
+            for machine_idx in range(self.num_mas):
+                # breakdowns of the machine in the current batch
+                machine_idx_breakdowns = machine_breakdowns[batch_id][machine_idx]
+                for breakdown_no in range(len(machine_idx_breakdowns)):
+                    # if current time == machine breakdown time
+                    if machine_idx_breakdowns[breakdown_no]["TIME"] == td["time"][batch_id]:
+                        # duration of the breakdown
+                        duration = machine_idx_breakdowns[breakdown_no]["DURATION"]
+                        # machine is busy(not available) until -> " current_time + duration of the breakdown"
+                        td["busy_until"][batch_id][machine_idx] = td["time"][batch_id] + duration
+        return td
+
+
 
     def _get_features(self, td):
         td = super()._get_features(td)
@@ -163,7 +198,7 @@ class DJSSPEnv(FJSPEnv):
         mask = torch.cat((no_op_mask, ~action_mask), dim=1)
         return mask
 
-    #TODO!!!!!!!!!!!!!!!!!!!!!!!!  DYNAMIC JOB ARRIVAL !!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    # TODO: Dynamic Job Arrival
     def _get_job_machine_availability(self, td: TensorDict):
         batch_size = td.size(0)
 
@@ -190,13 +225,14 @@ class DJSSPEnv(FJSPEnv):
         # TODO exclude jobs that are not arrived yet
         # td["job_arrival_times"][batch_no][arr_time_job1, arr_time_job2, ........]
         # td["time"] = torch.Tensor([42, 42, 42])
-        for b in range(batch_size):
+        #td["batch_no"]'su sonradan ekledim
+        for batch_no in range(batch_size):
            for job_idx in range(self.num_jobs):
-               boo = td["job_arrival_times"][b][job_idx].le(td["time"])
-               if(not boo[b].item()):
-                   action_mask[b][job_idx].fill_(True) # TODO: check the logic again-here can be True too
-                   print(f"IN BATCH {b} JOB WITH ID {job_idx} not arrived yet")
-                   #action_mask[b][job_idx] = 0
+               boo = td["job_arrival_times"][batch_no][job_idx].le(td["time"])
+               if(not boo[batch_no].item()):
+                   action_mask[batch_no][job_idx].fill_(True) # TODO: check the logic again-here can be False or Int Bool  too
+                   print(f"IN BATCH {batch_no} JOB WITH ID {job_idx} not arrived yet")
+
         return action_mask
 
     def _translate_action(self, td):
@@ -215,3 +251,11 @@ class DJSSPEnv(FJSPEnv):
         ]
         assert len(files) > 0, "No files found in the specified path"
         return files
+
+
+
+
+
+
+#TODO: we not : makestep'i yazdigin zaman proc_times yerine actual_proctimes kullanarak
+# stochastic processing time'i kullanmis olursi
