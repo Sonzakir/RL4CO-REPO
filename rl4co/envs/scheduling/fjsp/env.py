@@ -1,3 +1,5 @@
+from time import sleep
+
 import torch
 
 from einops import rearrange, reduce
@@ -210,6 +212,7 @@ class FJSPEnv(EnvBase):
 
         # mask jobs that are done already
         action_mask.add_(td["job_done"].unsqueeze(2))
+
         # as well as jobs that are currently processed
         action_mask.add_(td["job_in_process"].unsqueeze(2))
 
@@ -221,6 +224,7 @@ class FJSPEnv(EnvBase):
             td["proc_times"], td["next_op"].unsqueeze(1), dim=2, squeeze=False
         ).transpose(1, 2)
         action_mask.add_(next_ops_proc_times == 0)
+
         return action_mask
 
     def get_action_mask(self, td: TensorDict) -> torch.Tensor:
@@ -252,13 +256,14 @@ class FJSPEnv(EnvBase):
         # cloning required to avoid inplace operation which avoids gradient backtracking
         td = td.clone()
         td["action"].subtract_(1)
+
         # (bs)
         dones = td["done"].squeeze(1)
+
         # specify which batch instances require which operation
         no_op = td["action"].eq(NO_OP_ID)
         no_op = no_op & ~dones
         req_op = ~no_op & ~dones
-
         # transition to next time for no op instances
         if no_op.any():
             td, dones = self._transit_to_next_time(no_op, td)
@@ -366,10 +371,12 @@ class FJSPEnv(EnvBase):
         # 2.) all operations are already currently in process (can only happen if num_jobs < num_machines)
         # 3.) idle machines can not process any of the not yet scheduled operations
         # 4.) no_op is choosen
+
         available_time_ma = td["busy_until"]
         end_op_per_job = td["end_op_per_job"]
         # we want to transition to the next time step where a machine becomes idle again. This time step must be
         # in the future, therefore we mask all machine idle times lying in the past / present
+
         available_time = (
             torch.where(
                 available_time_ma > td["time"][:, None], available_time_ma, torch.inf
@@ -397,6 +404,7 @@ class FJSPEnv(EnvBase):
 
         td["job_done"] = td["job_done"] + job_finished
         td["done"] = td["job_done"].all(1, keepdim=True)
+
 
         return td, td["done"].squeeze(1)
 

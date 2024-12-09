@@ -29,7 +29,8 @@ class L2DPPOModel(StepwisePPO):
     ):
         assert env.name in [
             "fjsp",
-            "jssp",
+            "jssp" ,
+            "djsp"
         ], "L2DModel currently only works for Job-Shop Scheduling Problems"
         if policy is None:
             policy = L2DPolicy4PPO(env_name=env.name, **policy_kwargs)
@@ -62,6 +63,7 @@ class L2DModel(REINFORCE):
         assert env.name in [
             "fjsp",
             "jssp",
+            "djsp"
         ], "L2DModel currently only works for Job-Shop Scheduling Problems"
         if policy is None:
             policy = L2DPolicy(env_name=env.name, **policy_kwargs)

@@ -1,7 +1,8 @@
 import os
+from time import sleep
 
 from rl4co.envs.scheduling.djssp.generator import DJSSPGenerator
-from rl4co.envs.scheduling.fjsp import INIT_FINISH
+from rl4co.envs.scheduling.fjsp import INIT_FINISH, NO_OP_ID
 from rl4co.envs.scheduling.fjsp.env import FJSPEnv
 from rl4co.envs.scheduling.fjsp.utils import calc_lower_bound
 from rl4co.utils.ops import gather_by_index
@@ -73,6 +74,12 @@ class DJSSPEnv(FJSPEnv):
         super().__init__(generator, generator_params, mask_no_ops, **kwargs)
 
 
+    # num_mas remains unchanged
+    # num_jobs remains unchanged
+    # n_ops_max remains unchanged
+    # set_instance_params remains unchanged
+    # decode_graph_structure
+
     #FJSP
     def _reset(self, td: TensorDict = None, batch_size=None) -> TensorDict:
         self.set_instance_params(td)
@@ -108,11 +115,15 @@ class DJSSPEnv(FJSPEnv):
                 "op_scheduled": torch.full((*batch_size, n_ops_max), False),
                 "job_in_process": torch.full((*batch_size, self.num_jobs), False),
                 "reward": torch.zeros((*batch_size,), dtype=torch.float32),
-                "time": torch.zeros((*batch_size,)),
+                "time": torch.min(td["job_arrival_times"], dim=1).values,  # -> advance the starting time to the earliest time a job arrives
                 "job_done": torch.full((*batch_size, self.num_jobs), False),
                 "done": torch.full((*batch_size, 1), False),
             },
+            # changes: "time": torch.zeros((*batch_size,)) -> torch.min(td["job_arrival_times"], dim=1).values
         )
+
+        #TODO: MACHINE_BREAKDOWNS_IN_RESET()
+        td_reset = self._check_machine_breakdowns(td_reset)
 
         td_reset.set("action_mask", self.get_action_mask(td_reset))
         # add additional features to tensordict
@@ -138,7 +149,7 @@ class DJSSPEnv(FJSPEnv):
     # TODO -> here we can take td as an input and we can get the batch_size from it
     # WARNING: Maybe here we have to clone the tensordict
     def _check_machine_breakdowns(self, td: TensorDict ):
-        td["time"] = torch.Tensor([3.000108480453491, 0, 0])
+        #td["time"] = torch.Tensor([3.000108480453491, 0, 0])
         batch_size = td.size(0)
         # breakdown of all machines in all bathces
         machine_breakdowns = td["machine_breakdowns"]
@@ -196,11 +207,18 @@ class DJSSPEnv(FJSPEnv):
         # NOTE: 1 means feasible action, 0 means infeasible action
         # (bs, 1 + n_j)
         mask = torch.cat((no_op_mask, ~action_mask), dim=1)
+
+        # print(".............THIS IS GET_ACTION MASK.......")
+        # print(mask)
+        # print(".............THIS IS GET_ACTION MASK.......")
         return mask
 
     # TODO: Dynamic Job Arrival
     def _get_job_machine_availability(self, td: TensorDict):
         batch_size = td.size(0)
+
+        # TODO: CHECK_MACHINE_BREAKDOWNS_GET_JOB_MACHINE_AVAILABILITY
+        td = self._check_machine_breakdowns(td)
 
         # (bs, jobs, machines)
         action_mask = torch.full((batch_size, self.num_jobs, self.num_mas), False).to(
@@ -209,9 +227,30 @@ class DJSSPEnv(FJSPEnv):
 
         # mask jobs that are done already
         action_mask.add_(td["job_done"].unsqueeze(2))
+        #################################################################################
+        # job_arrival_times = td["job_arrival_times"]
+        # current_time = td["time"]
+        #
+        # # Reshape current_time to match dimensions for broadcasting
+        # current_time = current_time.unsqueeze(-1)  # Shape: [batch_size, 1]
+        #
+        # # Compare arrival times with current time to create a boolean tensor
+        # job_arrived =   (job_arrival_times <= current_time)  # Shape: [batch_size, num_jobs]
+        #
+        # # Ensure the result is of boolean type
+        # job_arrived = job_arrived.to(torch.bool)
+        #
+        # action_mask.add_(job_arrived.unsqueeze(2))
+
+        # td["job_arrived"]
+
+        #################################################################################
 
         # as well as jobs that are currently processed
         action_mask.add_(td["job_in_process"].unsqueeze(2))
+
+
+
 
         # mask machines that are currently busy
         action_mask.add_(td["busy_until"].gt(td["time"].unsqueeze(1)).unsqueeze(1))
@@ -222,16 +261,24 @@ class DJSSPEnv(FJSPEnv):
         ).transpose(1, 2)
         action_mask.add_(next_ops_proc_times == 0)
 
+        # print("-------------------_get_job_machine_availability()_BEFORE ACTION MASK -------------------")
+        # print(action_mask)
+        # print("-------------------_get_job_machine_availability()_BEFORE ACTION MASK-- END -------------------")
+
         # TODO exclude jobs that are not arrived yet
         # td["job_arrival_times"][batch_no][arr_time_job1, arr_time_job2, ........]
         # td["time"] = torch.Tensor([42, 42, 42])
         #td["batch_no"]'su sonradan ekledim
         for batch_no in range(batch_size):
-           for job_idx in range(self.num_jobs):
+            #the problem is about here when there is no job to start -> it gives an error
+           for job_idx in range(0,self.num_jobs):
                boo = td["job_arrival_times"][batch_no][job_idx].le(td["time"])
                if(not boo[batch_no].item()):
                    action_mask[batch_no][job_idx].fill_(True) # TODO: check the logic again-here can be False or Int Bool  too
-                   print(f"IN BATCH {batch_no} JOB WITH ID {job_idx} not arrived yet")
+        #            print(f"IN BATCH {batch_no} JOB WITH ID {job_idx} not arrived yet")
+        # print("-------------------_get_job_machine_availability()_AFTER ACTION MASK -------------------")
+        # print(action_mask)
+        # print("-------------------_get_job_machine_availability()_AFTER ACTION MASK-- END -------------------")
 
         return action_mask
 
@@ -253,9 +300,84 @@ class DJSSPEnv(FJSPEnv):
         return files
 
 
+    def _step(self, td: TensorDict):
+        # cloning required to avoid inplace operation which avoids gradient backtracking
+        td = td.clone()
+        #####################################################################
+        # if(torch.all(td["time"]==0) and torch.all(td["job_arrival_times"]>0)):
+        #     #birinci fikrim
+        #     #print(".action" , td["action_mask"])
+        #     #td.set("action_mask", self.get_action_mask(td))
+        #     #return td
+        #     # 2inci fikrim
+        #     print("&&THE CONDIITION IS TRUE")
+        #     # td ,_ = self._transit_to_next_time(False, td )
+        #     # return td
+        #     # 3üncü fikrim
+        #     # For each batch, set td["time"] to the minimum of the corresponding batch in td["job_arrival_times"]
+        #     td["time"] = torch.min(td["job_arrival_times"], dim=1).values
+        #     print("THIS IS JOB ARRIVAL TIMES" , td["job_arrival_times"])
+        #     td.set("action_mask" , self.get_action_mask(td))
+        #     return self._step(td)
+        # burada ben sadece ilk seferinde eger td times sifiersa action mask'i düzelttim ama bu tam olarak da
+        # dogru olmayabilir burada hata YAPMIS olabilirim
+        #####################################################################
 
+        td["action"].subtract_(1)
+
+        # (bs)
+        dones = td["done"].squeeze(1)
+
+        # specify which batch instances require which operation
+        no_op = td["action"].eq(NO_OP_ID)
+        no_op = no_op & ~dones
+        req_op = ~no_op & ~dones
+        # transition to next time for no op instances
+        if no_op.any():
+            td, dones = self._transit_to_next_time(no_op, td)
+
+        # select only instances that perform a scheduling action
+        td_op = td.masked_select(req_op)
+
+        td_op = self._make_step(td_op)
+        # update the tensordict
+        td[req_op] = td_op
+
+        # action mask
+        td.set("action_mask", self.get_action_mask(td))
+
+        step_complete = self._check_step_complete(td, dones)
+        while step_complete.any():
+            td, dones = self._transit_to_next_time(step_complete, td)
+            td.set("action_mask", self.get_action_mask(td))
+            step_complete = self._check_step_complete(td, dones)
+        if self.check_mask:
+            assert reduce(td["action_mask"], "bs ... -> bs", "any").all()
+
+        if self.stepwise_reward:
+            # if we require a stepwise reward, the change in the calculated lower bounds could serve as such
+            lbs = calc_lower_bound(td)
+            td["reward"] = -(lbs.max(1).values - td["lbs"].max(1).values)
+            td["lbs"] = lbs
+        else:
+            td["lbs"] = calc_lower_bound(td)
+
+        # add additional features to tensordict
+        td = self._get_features(td)
+
+        return td
+
+
+
+    #TODO for experiment purposes
+#TODO: MACHINE BREAKDOWN ICIN STEP VE MAKE_STEP'e bir sey _check_machine_availability() cagrisi koymayi planladim
+# ama tam olarak nereye koyabilecegimden tam olarak emin olmadim
 
 
 
 #TODO: we not : makestep'i yazdigin zaman proc_times yerine actual_proctimes kullanarak
 # stochastic processing time'i kullanmis olursi
+
+
+
+

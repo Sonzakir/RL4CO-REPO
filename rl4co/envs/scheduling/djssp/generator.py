@@ -202,7 +202,7 @@ class DJSSPGenerator(Generator):
             {
                 "start_op_per_job": start_op_per_job,
                 "end_op_per_job": end_op_per_job,
-                "proc_times": proc_times,                        # estimated processing time
+                "proc_times": actual_proc_times,                        #TODO: estimated -> actual_proc_times
                 "actual_proc_times": actual_proc_times,          # stochastic processing time
                 "pad_mask": pad_mask,
                 "machine_breakdowns": breakdown_list,               #  machine breakdowns
@@ -220,6 +220,7 @@ class DJSSPGenerator(Generator):
         time_seed = 8484
         machine_seed = 1245
         # RNGenerators
+        from random import random
         rng_time = random.Random(time_seed)
         rng_machine = random.Random(machine_seed)
 
