@@ -225,6 +225,7 @@ class FJSPEnv(EnvBase):
         ).transpose(1, 2)
         action_mask.add_(next_ops_proc_times == 0)
 
+
         return action_mask
 
     def get_action_mask(self, td: TensorDict) -> torch.Tensor:

@@ -1,5 +1,4 @@
 import os
-from time import sleep
 
 from rl4co.envs.scheduling.djssp.generator import DJSSPGenerator
 from rl4co.envs.scheduling.fjsp import INIT_FINISH, NO_OP_ID
@@ -74,13 +73,9 @@ class DJSSPEnv(FJSPEnv):
         super().__init__(generator, generator_params, mask_no_ops, **kwargs)
 
 
-    # num_mas remains unchanged
-    # num_jobs remains unchanged
-    # n_ops_max remains unchanged
-    # set_instance_params remains unchanged
-    # decode_graph_structure
 
-    #FJSP
+
+
     def _reset(self, td: TensorDict = None, batch_size=None) -> TensorDict:
         self.set_instance_params(td)
 
@@ -94,14 +89,16 @@ class DJSSPEnv(FJSPEnv):
         finish_times = torch.full((*batch_size, n_ops_max), INIT_FINISH)
         ma_assignment = torch.zeros((*batch_size, self.num_mas, n_ops_max))
 
-        # TODO: for djssp -> i can change the busy_until initialization in here
         # reset feature space
         busy_until = torch.zeros((*batch_size, self.num_mas))
         # (bs, ma, ops)
         ops_ma_adj = (td_reset["proc_times"] > 0).to(torch.float32)
         # (bs, ops)
         num_eligible = torch.sum(ops_ma_adj, dim=1)
-        #TODO: stochastic processing times
+
+        #TODO:i guess the problem about the td["machine_breakdowns"]<batch_size is that
+        #we are not regeneerating batchsize when we train the model -> therefore it is reusing the old td["machine_breakdowns"]
+        ma_breakdowns = DJ
 
         td_reset = td_reset.update(
             {
@@ -123,6 +120,8 @@ class DJSSPEnv(FJSPEnv):
         )
 
         #TODO: MACHINE_BREAKDOWNS_IN_RESET()
+        # check machine breakdowns and update td["busy_until"] if necessary
+        print("thit is in reset" , batch_size)
         td_reset = self._check_machine_breakdowns(td_reset)
 
         td_reset.set("action_mask", self.get_action_mask(td_reset))
@@ -132,28 +131,31 @@ class DJSSPEnv(FJSPEnv):
 
         return td_reset
 
-   # # td["time"] = torch.Tensor([2.182248115539551, 2.182248115539551, 2.182248115539551])
-   #  batch_idx = 0
-   #  for bs in range(batch_idx + 1):
-   #      for machine_idx in range(env.num_mas):
-   #          m_idx_breakdowns = td["machine_breakdowns"][bs - 1][machine_idx]
-   #          for breakdown_no in range(len(m_idx_breakdowns)):
-   #
-   #              if m_idx_breakdowns[breakdown_no]["TIME"] == td["time"][0]:
-   #                  print(2.182248115539551)
-   #                  print(f"Machine {machine_idx} - with TIME {m_idx_breakdowns[breakdown_no]['TIME']} ")
-   #                  print(td["busy_until"][bs][machine_idx])
-   #                  td["busy_until"][bs][machine_idx] = td["time"][0] + m_idx_breakdowns[breakdown_no]["DURATION"]
-   #                  print(td["busy_until"][bs][machine_idx])
 
-    # TODO -> here we can take td as an input and we can get the batch_size from it
+
     # WARNING: Maybe here we have to clone the tensordict
     def _check_machine_breakdowns(self, td: TensorDict ):
-        #td["time"] = torch.Tensor([3.000108480453491, 0, 0])
-        batch_size = td.size(0)
+        """
+            Method to check for machine breakdowns in the environment.
+
+            Args:
+                td: The state of the environment at the current time step (td["time"]).
+
+            Returns:
+                The updated td with the modified td["busy_until"] entry.
+                If a machine has a breakdown at the current time step (td["time"])
+                -> the "busy_until" entry for that machine is adjusted to the time step when the machine is repaired.
+        """
+
+        #batch_size = td.size(0)
+
         # breakdown of all machines in all bathces
         machine_breakdowns = td["machine_breakdowns"]
-        for batch_id in range(batch_size):
+        print("Batch size is : len(machine_breakdowns) ", len(machine_breakdowns))
+        another_batch_size = td["time"].shape[0]
+        print()
+        # for batch_id in range(batch_size):
+        for batch_id in range(len(machine_breakdowns)):
             for machine_idx in range(self.num_mas):
                 # breakdowns of the machine in the current batch
                 machine_idx_breakdowns = machine_breakdowns[batch_id][machine_idx]
@@ -208,15 +210,13 @@ class DJSSPEnv(FJSPEnv):
         # (bs, 1 + n_j)
         mask = torch.cat((no_op_mask, ~action_mask), dim=1)
 
-        # print(".............THIS IS GET_ACTION MASK.......")
-        # print(mask)
-        # print(".............THIS IS GET_ACTION MASK.......")
         return mask
 
-    # TODO: Dynamic Job Arrival
+    # TODO: Dynamic Job Arrival checks are implemented in here
     def _get_job_machine_availability(self, td: TensorDict):
         batch_size = td.size(0)
 
+        print("This is in _get_job_machine_availability" , batch_size)
         # TODO: CHECK_MACHINE_BREAKDOWNS_GET_JOB_MACHINE_AVAILABILITY
         td = self._check_machine_breakdowns(td)
 
@@ -227,30 +227,20 @@ class DJSSPEnv(FJSPEnv):
 
         # mask jobs that are done already
         action_mask.add_(td["job_done"].unsqueeze(2))
-        #################################################################################
+
+
+        ####################alternative for job arrival_times checking##################
         # job_arrival_times = td["job_arrival_times"]
         # current_time = td["time"]
-        #
-        # # Reshape current_time to match dimensions for broadcasting
         # current_time = current_time.unsqueeze(-1)  # Shape: [batch_size, 1]
-        #
-        # # Compare arrival times with current time to create a boolean tensor
         # job_arrived =   (job_arrival_times <= current_time)  # Shape: [batch_size, num_jobs]
-        #
-        # # Ensure the result is of boolean type
         # job_arrived = job_arrived.to(torch.bool)
-        #
         # action_mask.add_(job_arrived.unsqueeze(2))
-
         # td["job_arrived"]
-
         #################################################################################
 
         # as well as jobs that are currently processed
         action_mask.add_(td["job_in_process"].unsqueeze(2))
-
-
-
 
         # mask machines that are currently busy
         action_mask.add_(td["busy_until"].gt(td["time"].unsqueeze(1)).unsqueeze(1))
@@ -261,24 +251,17 @@ class DJSSPEnv(FJSPEnv):
         ).transpose(1, 2)
         action_mask.add_(next_ops_proc_times == 0)
 
-        # print("-------------------_get_job_machine_availability()_BEFORE ACTION MASK -------------------")
-        # print(action_mask)
-        # print("-------------------_get_job_machine_availability()_BEFORE ACTION MASK-- END -------------------")
-
-        # TODO exclude jobs that are not arrived yet
-        # td["job_arrival_times"][batch_no][arr_time_job1, arr_time_job2, ........]
-        # td["time"] = torch.Tensor([42, 42, 42])
-        #td["batch_no"]'su sonradan ekledim
+        """
+                exclude jobs that are not arrived yet
+                td["job_arrival_times"] has the form:
+                  ->td["job_arrival_times"][batch_no][arr_time_job1, arr_time_job2, ........]
+        """
+        #TODO: this is the reason why we wait until operation 0 to finish
         for batch_no in range(batch_size):
-            #the problem is about here when there is no job to start -> it gives an error
            for job_idx in range(0,self.num_jobs):
                boo = td["job_arrival_times"][batch_no][job_idx].le(td["time"])
                if(not boo[batch_no].item()):
-                   action_mask[batch_no][job_idx].fill_(True) # TODO: check the logic again-here can be False or Int Bool  too
-        #            print(f"IN BATCH {batch_no} JOB WITH ID {job_idx} not arrived yet")
-        # print("-------------------_get_job_machine_availability()_AFTER ACTION MASK -------------------")
-        # print(action_mask)
-        # print("-------------------_get_job_machine_availability()_AFTER ACTION MASK-- END -------------------")
+                   action_mask[batch_no][job_idx].fill_(True)
 
         return action_mask
 
@@ -303,25 +286,6 @@ class DJSSPEnv(FJSPEnv):
     def _step(self, td: TensorDict):
         # cloning required to avoid inplace operation which avoids gradient backtracking
         td = td.clone()
-        #####################################################################
-        # if(torch.all(td["time"]==0) and torch.all(td["job_arrival_times"]>0)):
-        #     #birinci fikrim
-        #     #print(".action" , td["action_mask"])
-        #     #td.set("action_mask", self.get_action_mask(td))
-        #     #return td
-        #     # 2inci fikrim
-        #     print("&&THE CONDIITION IS TRUE")
-        #     # td ,_ = self._transit_to_next_time(False, td )
-        #     # return td
-        #     # 3üncü fikrim
-        #     # For each batch, set td["time"] to the minimum of the corresponding batch in td["job_arrival_times"]
-        #     td["time"] = torch.min(td["job_arrival_times"], dim=1).values
-        #     print("THIS IS JOB ARRIVAL TIMES" , td["job_arrival_times"])
-        #     td.set("action_mask" , self.get_action_mask(td))
-        #     return self._step(td)
-        # burada ben sadece ilk seferinde eger td times sifiersa action mask'i düzelttim ama bu tam olarak da
-        # dogru olmayabilir burada hata YAPMIS olabilirim
-        #####################################################################
 
         td["action"].subtract_(1)
 
@@ -367,6 +331,92 @@ class DJSSPEnv(FJSPEnv):
 
         return td
 
+    # TODO: Machine breakdown job interruption/delay will be implemented in here
+    def _make_step(self, td: TensorDict) -> TensorDict:
+
+        """
+        Environment transition function
+        """
+
+        batch_idx = torch.arange(td.size(0))
+
+        # 3*(#req_op)
+        selected_job, selected_op, selected_machine = self._translate_action(td)
+
+        # mark job as being processed
+        td["job_in_process"][batch_idx, selected_job] = 1
+
+        # mark op as schedules
+        td["op_scheduled"][batch_idx, selected_op] = True
+
+        # update machine state
+        proc_time_of_action = td["proc_times"][batch_idx, selected_machine, selected_op]
+        # we may not select a machine that is busy
+        assert torch.all(td["busy_until"][batch_idx, selected_machine] <= td["time"])
+
+        # update schedule
+        td["start_times"][batch_idx, selected_op] = td["time"]
+        td["finish_times"][batch_idx, selected_op] = td["time"] + proc_time_of_action
+
+        td["ma_assignment"][batch_idx, selected_machine, selected_op] = 1
+        # update the state of the selected machine
+        td["busy_until"][batch_idx, selected_machine] = td["time"] + proc_time_of_action
+
+        # machine breakdown during processing
+        """
+            Job Interrupt Check
+            If there is a machine breakdown in time interval [td["start_times"] - td["finish_times"]]
+                Then td["finish_times"] = td["finish_times"] + machine repair time
+        """
+
+        # print("---------------------------------")
+        # print(td.size(0))
+        # print(td)
+        # print("-----------------------------------")
+        for batch_no in range(len(td["machine_breakdowns"])):
+            selected_machine_of_the_batch = selected_machine[batch_no].item()
+            selected_operation_of_the_batch = selected_op[batch_no].item()
+            breakdowns_of_machine = td["machine_breakdowns"][batch_no][selected_machine_of_the_batch]
+            # iterate over each breakdown of the machine
+            for breakdown_no in range(len(breakdowns_of_machine)):
+                # breakdown occurence time
+                breakdown_time = breakdowns_of_machine[breakdown_no]["TIME"]
+                breakdown_duration = breakdowns_of_machine[breakdown_no]["DURATION"]
+                starting_time_of_operation = td["start_times"][batch_no,selected_operation_of_the_batch].item()
+                finishing_time_of_operation = td["finish_times"][batch_no,selected_operation_of_the_batch].item()
+                # if during operation processing a machine breakdown occurs -> wait until machine is repaired
+                # and then process the operation
+                if((starting_time_of_operation < breakdown_time < finishing_time_of_operation) and (finishing_time_of_operation<9999.0000)):
+                    # repairing time of the machine during execution is added
+                    td["finish_times"][batch_no,selected_operation_of_the_batch] += breakdown_duration
+                    # todo: check if this correctly calculates the finish time s yani eski finish time'i mi aliyor yenisini mi
+                    td["busy_until"][batch_no,selected_machine_of_the_batch] = td["finish_times"][batch_no,selected_operation_of_the_batch]
+
+
+
+        # removed before job interrupt check
+        # td["ma_assignment"][batch_idx, selected_machine, selected_op] = 1
+        # # update the state of the selected machine
+        # td["busy_until"][batch_idx, selected_machine] = td["time"] + proc_time_of_action
+        # update adjacency matrices (remove edges)
+        td["proc_times"] = td["proc_times"].scatter(
+            2,
+            selected_op[:, None, None].expand(-1, self.num_mas, 1),
+            torch.zeros_like(td["proc_times"]),
+        )
+        td["ops_ma_adj"] = td["proc_times"].contiguous().gt(0).to(torch.float32)
+        td["num_eligible"] = torch.sum(td["ops_ma_adj"], dim=1)
+        # update the positions of an operation in the job (subtract 1 from each operation of the selected job)
+        td["ops_sequence_order"] = (
+            td["ops_sequence_order"] - gather_by_index(td["job_ops_adj"], selected_job, 1)
+        ).clip(0)
+        # some checks
+        # assert torch.allclose(
+        #     td["proc_times"].sum(1).gt(0).sum(1),  # num ops with eligible machine
+        #     (~(td["op_scheduled"] + td["pad_mask"])).sum(1),  # num unscheduled ops
+        # )
+
+        return td
 
 
     #TODO for experiment purposes
@@ -375,8 +425,6 @@ class DJSSPEnv(FJSPEnv):
 
 
 
-#TODO: we not : makestep'i yazdigin zaman proc_times yerine actual_proctimes kullanarak
-# stochastic processing time'i kullanmis olursi
 
 
 
