@@ -63,6 +63,7 @@ class FJSPGenerator(Generator):
         if len(unused_kwargs) > 0:
             log.error(f"Found {len(unused_kwargs)} unused kwargs: {unused_kwargs}")
 
+
     def _simulate_processing_times(
         self, n_eligible_per_ops: torch.Tensor
     ) -> torch.Tensor:

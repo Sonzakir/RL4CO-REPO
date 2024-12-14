@@ -79,6 +79,8 @@ class DJSSPGenerator(Generator):
         self.mtbf = mtbf
         self.mttr = mttr
 
+        #TODO: delete this
+
         if self.one2one_ma_map:
             assert self.min_ops_per_job == self.max_ops_per_job == self.num_mas
         # fixed number of total operations == maximum number of operation per job * number of jobs

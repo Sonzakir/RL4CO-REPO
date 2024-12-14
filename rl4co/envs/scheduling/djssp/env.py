@@ -1,5 +1,7 @@
 import os
 
+from torchrl.data import Composite, Unbounded, Bounded
+
 from rl4co.envs.scheduling.djssp.generator import DJSSPGenerator
 from rl4co.envs.scheduling.fjsp import INIT_FINISH, NO_OP_ID
 from rl4co.envs.scheduling.fjsp.env import FJSPEnv
@@ -70,6 +72,7 @@ class DJSSPEnv(FJSPEnv):
             else:
                 generator = DJSSPGenerator(**generator_params)
 
+        self.generator = generator
         super().__init__(generator, generator_params, mask_no_ops, **kwargs)
 
 
@@ -98,7 +101,7 @@ class DJSSPEnv(FJSPEnv):
 
         #TODO:i guess the problem about the td["machine_breakdowns"]<batch_size is that
         #we are not regeneerating batchsize when we train the model -> therefore it is reusing the old td["machine_breakdowns"]
-        ma_breakdowns = DJ
+        ma_breakdowns = self.generator._simulate_machine_breakdowns_with_mtbf_mttr(batch_size,lambda_mtbf=20 , lambda_mttr=3)
 
         td_reset = td_reset.update(
             {
@@ -109,6 +112,7 @@ class DJSSPEnv(FJSPEnv):
                 "num_eligible": num_eligible,
                 "next_op": start_op_per_job.clone().to(torch.int64),
                 "ops_ma_adj": ops_ma_adj,
+                "machine_breakdowns": ma_breakdowns,
                 "op_scheduled": torch.full((*batch_size, n_ops_max), False),
                 "job_in_process": torch.full((*batch_size, self.num_jobs), False),
                 "reward": torch.zeros((*batch_size,), dtype=torch.float32),
@@ -121,7 +125,7 @@ class DJSSPEnv(FJSPEnv):
 
         #TODO: MACHINE_BREAKDOWNS_IN_RESET()
         # check machine breakdowns and update td["busy_until"] if necessary
-        print("thit is in reset" , batch_size)
+        # print("thit is in reset" , batch_size)
         td_reset = self._check_machine_breakdowns(td_reset)
 
         td_reset.set("action_mask", self.get_action_mask(td_reset))
@@ -148,12 +152,12 @@ class DJSSPEnv(FJSPEnv):
         """
 
         #batch_size = td.size(0)
-
+        # print("env.py-155" , td.size(0))
         # breakdown of all machines in all bathces
         machine_breakdowns = td["machine_breakdowns"]
-        print("Batch size is : len(machine_breakdowns) ", len(machine_breakdowns))
+        #print("Batch size is : len(machine_breakdowns) ", len(machine_breakdowns))
         another_batch_size = td["time"].shape[0]
-        print()
+        # print()
         # for batch_id in range(batch_size):
         for batch_id in range(len(machine_breakdowns)):
             for machine_idx in range(self.num_mas):
@@ -216,7 +220,6 @@ class DJSSPEnv(FJSPEnv):
     def _get_job_machine_availability(self, td: TensorDict):
         batch_size = td.size(0)
 
-        print("This is in _get_job_machine_availability" , batch_size)
         # TODO: CHECK_MACHINE_BREAKDOWNS_GET_JOB_MACHINE_AVAILABILITY
         td = self._check_machine_breakdowns(td)
 
@@ -417,6 +420,89 @@ class DJSSPEnv(FJSPEnv):
         # )
 
         return td
+
+
+
+    def _make_spec(self, generator: DJSSPGenerator):
+        self.observation_spec = Composite(
+            time=Unbounded(
+                shape=(1,),
+                dtype=torch.int64,
+            ),
+            next_op=Unbounded(
+                shape=(self.num_jobs,),
+                dtype=torch.int64,
+            ),
+            proc_times=Unbounded(
+                shape=(self.num_mas, self.n_ops_max),
+                dtype=torch.float32,
+            ),
+            pad_mask=Unbounded(
+                shape=(self.num_mas, self.n_ops_max),
+                dtype=torch.bool,
+            ),
+            start_op_per_job=Unbounded(
+                shape=(self.num_jobs,),
+                dtype=torch.bool,
+            ),
+            end_op_per_job=Unbounded(
+                shape=(self.num_jobs,),
+                dtype=torch.bool,
+            ),
+            start_times=Unbounded(
+                shape=(self.n_ops_max,),
+                dtype=torch.int64,
+            ),
+            finish_times=Unbounded(
+                shape=(self.n_ops_max,),
+                dtype=torch.int64,
+            ),
+            job_ops_adj=Unbounded(
+                shape=(self.num_jobs, self.n_ops_max),
+                dtype=torch.int64,
+            ),
+            ops_job_map=Unbounded(
+                shape=(self.n_ops_max),
+                dtype=torch.int64,
+            ),
+            ops_sequence_order=Unbounded(
+                shape=(self.n_ops_max),
+                dtype=torch.int64,
+            ),
+            ma_assignment=Unbounded(
+                shape=(self.num_mas, self.n_ops_max),
+                dtype=torch.int64,
+            ),
+            busy_until=Unbounded(
+                shape=(self.num_mas,),
+                dtype=torch.int64,
+            ),
+            num_eligible=Unbounded(
+                shape=(self.n_ops_max,),
+                dtype=torch.int64,
+            ),
+            job_in_process=Unbounded(
+                shape=(self.num_jobs,),
+                dtype=torch.bool,
+            ),
+            job_done=Unbounded(
+                shape=(self.num_jobs,),
+                dtype=torch.bool,
+            ),
+            machine_breakdowns=Unbounded(  # Explicitly include machine_breakdowns
+                shape=(),  # Use appropriate shape or set to ()
+            ),
+            shape=(),
+        )
+        self.action_spec = Bounded(
+            shape=(1,),
+            dtype=torch.int64,
+            low=-1,
+            high=self.n_ops_max,
+        )
+        self.reward_spec = Unbounded(shape=(1,))
+        self.done_spec = Unbounded(shape=(1,), dtype=torch.bool)
+  # TODO: i guess the missing one is here -> we have to add job arrival_times and so on in here
 
 
     #TODO for experiment purposes
