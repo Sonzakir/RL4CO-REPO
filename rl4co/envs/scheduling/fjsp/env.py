@@ -386,6 +386,7 @@ class FJSPEnv(EnvBase):
             .values
         )
 
+
         assert not torch.any(available_time[step_complete].isinf())
         td["time"] = torch.where(step_complete, available_time, td["time"])
 

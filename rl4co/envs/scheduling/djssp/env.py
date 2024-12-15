@@ -1,11 +1,13 @@
 import os
 
+from matplotlib.style.core import available
 from torchrl.data import Composite, Unbounded, Bounded
 
 from rl4co.envs.scheduling.djssp.generator import DJSSPGenerator
 from rl4co.envs.scheduling.fjsp import INIT_FINISH, NO_OP_ID
 from rl4co.envs.scheduling.fjsp.env import FJSPEnv
 from rl4co.envs.scheduling.fjsp.utils import calc_lower_bound
+
 from rl4co.utils.ops import gather_by_index
 from einops import einsum, reduce
 import torch
@@ -99,9 +101,9 @@ class DJSSPEnv(FJSPEnv):
         # (bs, ops)
         num_eligible = torch.sum(ops_ma_adj, dim=1)
 
-        #TODO:i guess the problem about the td["machine_breakdowns"]<batch_size is that
-        #we are not regeneerating batchsize when we train the model -> therefore it is reusing the old td["machine_breakdowns"]
+
         ma_breakdowns = self.generator._simulate_machine_breakdowns_with_mtbf_mttr(batch_size,lambda_mtbf=20 , lambda_mttr=3)
+
 
         td_reset = td_reset.update(
             {
@@ -116,16 +118,17 @@ class DJSSPEnv(FJSPEnv):
                 "op_scheduled": torch.full((*batch_size, n_ops_max), False),
                 "job_in_process": torch.full((*batch_size, self.num_jobs), False),
                 "reward": torch.zeros((*batch_size,), dtype=torch.float32),
-                "time": torch.min(td["job_arrival_times"], dim=1).values,  # -> advance the starting time to the earliest time a job arrives
+                "time": torch.min(td_reset["job_arrival_times"] , dim=1).values,  # -> advance the starting time to the earliest time a job arrives
                 "job_done": torch.full((*batch_size, self.num_jobs), False),
                 "done": torch.full((*batch_size, 1), False),
             },
             # changes: "time": torch.zeros((*batch_size,)) -> torch.min(td["job_arrival_times"], dim=1).values
+            # "time": torch.min(td["job_arrival_times"],dim=1).values,  # -> advance the starting time to the earliest time a job arrives
+
         )
 
         #TODO: MACHINE_BREAKDOWNS_IN_RESET()
         # check machine breakdowns and update td["busy_until"] if necessary
-        # print("thit is in reset" , batch_size)
         td_reset = self._check_machine_breakdowns(td_reset)
 
         td_reset.set("action_mask", self.get_action_mask(td_reset))
@@ -151,11 +154,11 @@ class DJSSPEnv(FJSPEnv):
                 -> the "busy_until" entry for that machine is adjusted to the time step when the machine is repaired.
         """
 
+        #TODO:!!CLEAN-UP!!
         #batch_size = td.size(0)
         # print("env.py-155" , td.size(0))
         # breakdown of all machines in all bathces
         machine_breakdowns = td["machine_breakdowns"]
-        #print("Batch size is : len(machine_breakdowns) ", len(machine_breakdowns))
         another_batch_size = td["time"].shape[0]
         # print()
         # for batch_id in range(batch_size):
@@ -216,57 +219,8 @@ class DJSSPEnv(FJSPEnv):
 
         return mask
 
-    # TODO: Dynamic Job Arrival checks are implemented in here
-    def _get_job_machine_availability(self, td: TensorDict):
-        batch_size = td.size(0)
-
-        # TODO: CHECK_MACHINE_BREAKDOWNS_GET_JOB_MACHINE_AVAILABILITY
-        td = self._check_machine_breakdowns(td)
-
-        # (bs, jobs, machines)
-        action_mask = torch.full((batch_size, self.num_jobs, self.num_mas), False).to(
-            td.device
-        )
-
-        # mask jobs that are done already
-        action_mask.add_(td["job_done"].unsqueeze(2))
 
 
-        ####################alternative for job arrival_times checking##################
-        # job_arrival_times = td["job_arrival_times"]
-        # current_time = td["time"]
-        # current_time = current_time.unsqueeze(-1)  # Shape: [batch_size, 1]
-        # job_arrived =   (job_arrival_times <= current_time)  # Shape: [batch_size, num_jobs]
-        # job_arrived = job_arrived.to(torch.bool)
-        # action_mask.add_(job_arrived.unsqueeze(2))
-        # td["job_arrived"]
-        #################################################################################
-
-        # as well as jobs that are currently processed
-        action_mask.add_(td["job_in_process"].unsqueeze(2))
-
-        # mask machines that are currently busy
-        action_mask.add_(td["busy_until"].gt(td["time"].unsqueeze(1)).unsqueeze(1))
-
-        # exclude job-machine combinations, where the machine cannot process the next op of the job
-        next_ops_proc_times = gather_by_index(
-            td["proc_times"], td["next_op"].unsqueeze(1), dim=2, squeeze=False
-        ).transpose(1, 2)
-        action_mask.add_(next_ops_proc_times == 0)
-
-        """
-                exclude jobs that are not arrived yet
-                td["job_arrival_times"] has the form:
-                  ->td["job_arrival_times"][batch_no][arr_time_job1, arr_time_job2, ........]
-        """
-        #TODO: this is the reason why we wait until operation 0 to finish
-        for batch_no in range(batch_size):
-           for job_idx in range(0,self.num_jobs):
-               boo = td["job_arrival_times"][batch_no][job_idx].le(td["time"])
-               if(not boo[batch_no].item()):
-                   action_mask[batch_no][job_idx].fill_(True)
-
-        return action_mask
 
     def _translate_action(self, td):
         job = td["action"]
@@ -299,6 +253,7 @@ class DJSSPEnv(FJSPEnv):
         no_op = td["action"].eq(NO_OP_ID)
         no_op = no_op & ~dones
         req_op = ~no_op & ~dones
+
         # transition to next time for no op instances
         if no_op.any():
             td, dones = self._transit_to_next_time(no_op, td)
@@ -372,10 +327,7 @@ class DJSSPEnv(FJSPEnv):
                 Then td["finish_times"] = td["finish_times"] + machine repair time
         """
 
-        # print("---------------------------------")
-        # print(td.size(0))
-        # print(td)
-        # print("-----------------------------------")
+
         for batch_no in range(len(td["machine_breakdowns"])):
             selected_machine_of_the_batch = selected_machine[batch_no].item()
             selected_operation_of_the_batch = selected_op[batch_no].item()
@@ -420,9 +372,66 @@ class DJSSPEnv(FJSPEnv):
         # )
 
         return td
+#######################################################################################################################
+    """
+    Currently the problem in here -> it does not let us to train the model
+    """
+    def _transit_to_next_time(self, step_complete, td: TensorDict) -> TensorDict:
+        """
+        Transit to the next time
+        """
 
+        # we need a transition to a next time step if either
+        # 1.) all machines are busy
+        # 2.) all operations are already currently in process (can only happen if num_jobs < num_machines)
+        # 3.) idle machines can not process any of the not yet scheduled operations
+        # 4.) no_op is choosen
+        # 5.) job is not yet arrived
 
+        #available_time_ma = td["busy_until"]
+        available_time = (
+            torch.where(
+                td["busy_until"] > td["time"][:, None], td["busy_until"], torch.inf
+            ).min(1).values
+        )
+        next_job_arrival = td["job_arrival_times"].masked_fill(
+            td["job_arrival_times"] <= td["time"].unsqueeze(1), torch.inf
+        ).min(1).values
 
+        end_op_per_job = td["end_op_per_job"]
+        # we want to transition to the next time step where a machine becomes idle again. This time step must be
+        # in the future, therefore we mask all machine idle times lying in the past / present
+
+        # Transit to the minimum of machine idle time or next job arrival time
+        next_time = torch.min(available_time, next_job_arrival)
+        #assert not torch.any(next_time[step_complete].isinf())
+        assert not torch.any(torch.isinf(next_time) & step_complete)
+        td["time"] = torch.where(step_complete, next_time, td["time"])
+
+        # this may only be set when the operation is finished, not when it is scheduled
+        # operation of job is finished, set next operation and flag job as being idle
+        curr_ops_end = td["finish_times"].gather(1, td["next_op"])
+        op_finished = td["job_in_process"] & (curr_ops_end <= td["time"][:, None])
+        # check whether a job is finished, which is the case when the last operation of the job is finished
+        job_finished = op_finished & (td["next_op"] == end_op_per_job)
+        # determine the next operation for a job that is not done, but whose latest operation is finished
+        td["next_op"] = torch.where(
+            op_finished & ~job_finished,
+            td["next_op"] + 1,
+            td["next_op"],
+        )
+        td["job_in_process"][op_finished] = False
+
+        td["job_done"] = td["job_done"] + job_finished
+        #td["done"] = td["job_done"].all(1, keepdim=True)
+        td["done"] = td["job_done"].all(1, keepdim=True) & (td["time"] >= td["job_arrival_times"].max(1).values).unsqueeze(1)
+        # alternative checking if done -> then the current time must be greater than equal
+        # latest job arrival time in each batch & (td["time"] >= td["job_arrival_times"].max(1).values).unsqueeze(1)
+        return td, td["done"].squeeze(1)
+
+    #######################################################################################################################
+
+    # TODO: add job arrival_times here
     def _make_spec(self, generator: DJSSPGenerator):
         self.observation_spec = Composite(
             time=Unbounded(
@@ -489,8 +498,8 @@ class DJSSPEnv(FJSPEnv):
                 shape=(self.num_jobs,),
                 dtype=torch.bool,
             ),
-            machine_breakdowns=Unbounded(  # Explicitly include machine_breakdowns
-                shape=(),  # Use appropriate shape or set to ()
+            machine_breakdowns=Unbounded(
+                shape=(),  #for now ()
             ),
             shape=(),
         )
@@ -502,12 +511,6 @@ class DJSSPEnv(FJSPEnv):
         )
         self.reward_spec = Unbounded(shape=(1,))
         self.done_spec = Unbounded(shape=(1,), dtype=torch.bool)
-  # TODO: i guess the missing one is here -> we have to add job arrival_times and so on in here
-
-
-    #TODO for experiment purposes
-#TODO: MACHINE BREAKDOWN ICIN STEP VE MAKE_STEP'e bir sey _check_machine_availability() cagrisi koymayi planladim
-# ama tam olarak nereye koyabilecegimden tam olarak emin olmadim
 
 
 
@@ -515,3 +518,111 @@ class DJSSPEnv(FJSPEnv):
 
 
 
+    def _get_job_machine_availability(self, td: TensorDict):
+        '''
+        False(0) -> action is feasible True(1)-> action is not feasible '??????
+        Args:
+            td: TensorDict representing the current state of the environment.
+        Returns:
+            action_mask of size (batch_size, number of jobs, number of machines)
+            If an entry [x][y][z] = False (Include)
+                then in batch x the job y on machine z is available(feasible) and can be scheduled.
+            If an entry [x][y][z] = True  (Exclude)
+                then in batch x the job y on machine z is not available(feasible) and  therefore can't be dispatched
+
+
+        '''
+        batch_size = td.size(0)
+        # TODO: CHECK_MACHINE_BREAKDOWNS_GET_JOB_MACHINE_AVAILABILITY
+        td = self._check_machine_breakdowns(td)
+
+        # (bs, jobs, machines)
+        action_mask = torch.full((batch_size, self.num_jobs, self.num_mas), False).to(
+            td.device
+        )
+
+        ###############MASK JOBS THAT ARE NOT ARRIVED YET######################################
+        # mask jobs that are not arrived yet
+        # (bs, jobs) True -> job has not arrived yet ; False -> job has arrived
+        job_arrivals = td["time"].unsqueeze(1)<td["job_arrival_times"]
+        # expand the job arrivals to shape of action_mask and add_ .
+        # This ensures that, if job has not arrived yet,
+        # it is not available across all machines
+        action_mask.add_(job_arrivals.unsqueeze(2))
+
+        # Job arrival check via for-loops removed due to performance issues
+        #     for batch_no in range(batch_size):
+        #        for job_idx in range(0,self.num_jobs):
+        #            boo = td["job_arrival_times"][batch_no][job_idx].le(td["time"])
+        #            if(not boo[batch_no].item()):
+        #                action_mask[batch_no][job_idx].fill_(True)
+
+        # mask jobs that are done already
+        action_mask.add_(td["job_done"].unsqueeze(2))
+        # as well as jobs that are currently processed
+        action_mask.add_(td["job_in_process"].unsqueeze(2))
+        # mask machines that are currently busy
+        action_mask.add_(td["busy_until"].gt(td["time"].unsqueeze(1)).unsqueeze(1))
+        # exclude job-machine combinations, where the machine cannot process the next op of the job
+        next_ops_proc_times = gather_by_index(
+            td["proc_times"], td["next_op"].unsqueeze(1), dim=2, squeeze=False
+        ).transpose(1, 2)
+        action_mask.add_(next_ops_proc_times == 0)
+
+        return action_mask
+
+    # This is my main method ESKI GET_JOB_MACHINE_AVAILABAILITJI
+    # # TODO: Dynamic Job Arrival checks are implemented in here
+    # def _get_job_machine_availability(self, td: TensorDict):
+    #     batch_size = td.size(0)
+    #
+    #     # TODO: CHECK_MACHINE_BREAKDOWNS_GET_JOB_MACHINE_AVAILABILITY
+    #     td = self._check_machine_breakdowns(td)
+    #
+    #     # (bs, jobs, machines)
+    #     action_mask = torch.full((batch_size, self.num_jobs, self.num_mas), False).to(
+    #         td.device
+    #     )
+    #
+    #     # mask jobs that are done already
+    #     action_mask.add_(td["job_done"].unsqueeze(2))
+    #
+    #
+    #     ####################alternative for job arrival_times checking##################
+    #     # job_arrival_times = td["job_arrival_times"]
+    #     # current_time = td["time"]
+    #     # current_time = current_time.unsqueeze(-1)  # Shape: [batch_size, 1]
+    #     # job_arrived =   (job_arrival_times <= current_time)  # Shape: [batch_size, num_jobs]
+    #     # job_arrived = job_arrived.to(torch.bool)
+    #     # action_mask.add_(job_arrived.unsqueeze(2))
+    #     # td["job_arrived"]
+    #     #################################################################################
+    #
+    #     # as well as jobs that are currently processed
+    #     action_mask.add_(td["job_in_process"].unsqueeze(2))
+    #
+    #     # mask machines that are currently busy
+    #     action_mask.add_(td["busy_until"].gt(td["time"].unsqueeze(1)).unsqueeze(1))
+    #
+    #     # exclude job-machine combinations, where the machine cannot process the next op of the job
+    #     next_ops_proc_times = gather_by_index(
+    #         td["proc_times"], td["next_op"].unsqueeze(1), dim=2, squeeze=False
+    #     ).transpose(1, 2)
+    #     action_mask.add_(next_ops_proc_times == 0)
+    #
+    #     """
+    #             exclude jobs that are not arrived yet
+    #             td["job_arrival_times"] has the form:
+    #               ->td["job_arrival_times"][batch_no][arr_time_job1, arr_time_job2, ........]
+    #     """
+    #     #TODO: this is the reason why we wait until operation 0 to finish
+    #     # Hayir problem burayla alakali degil, burayi comment out yapinca da diger operation'in baslamasi icin
+    #     # 0-operation'in bitmesini bekliyor.Burayi comment out yapinca sadece garip bir sekilde render methodu sanki
+    #     # hepsi ayni anda basliyormus gibi gösteriyor
+    #     for batch_no in range(batch_size):
+    #        for job_idx in range(0,self.num_jobs):
+    #            boo = td["job_arrival_times"][batch_no][job_idx].le(td["time"])
+    #            if(not boo[batch_no].item()):
+    #                action_mask[batch_no][job_idx].fill_(True)
+    #
+    #     return action_mask
