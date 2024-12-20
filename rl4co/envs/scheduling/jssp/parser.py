@@ -97,6 +97,7 @@ def read(loc: Path, max_ops=None):
         batch_size=[1],
     )
 
+
     return td, num_jobs, num_machines, max_ops_per_job
 
 
@@ -108,3 +109,4 @@ def file2lines(loc: Union[Path, str]) -> List[List[int]]:
         return int(word) if "." not in word else int(float(word))
 
     return [[parse_num(x) for x in line.split()] for line in lines]
+

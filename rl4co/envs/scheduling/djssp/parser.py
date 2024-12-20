@@ -5,12 +5,13 @@ import torch
 
 from tensordict import TensorDict
 
+
 ProcessingData = List[Tuple[int, int]]
 
 
 def parse_job_line(line: Tuple[int]) -> Tuple[ProcessingData]:
     """
-    Parses a JSSP job data line of the following form:
+    Parses a DJSSP job data line of the following form:
 
         <num operations> * (<machine> <processing time>)
 
@@ -48,7 +49,7 @@ def get_max_ops_from_files(files):
 
 def read(loc: Path, max_ops=None):
     """
-    Reads an JSSP instance.
+    Reads an DJSSP instance.
 
     Args:
         loc: location of instance file
@@ -86,17 +87,23 @@ def read(loc: Path, max_ops=None):
             proc_times[ma - 1, op_cnt] = dur
             op_cnt += 1
     proc_times = proc_times.unsqueeze(0)
-
+    # stochastic processing times
+    actual_processing_times = _simulate_actual_processing_times(proc_times)
+    # job arrival times
+    job_arrival_times = _generate_random_job_arrivals(start_op_per_job.size(0), start_op_per_job.size(1),20)
     td = TensorDict(
         {
             "start_op_per_job": start_op_per_job,
             "end_op_per_job": end_op_per_job,
-            "proc_times": proc_times,
+            "proc_times": actual_processing_times,
             "pad_mask": pad_mask,
+            "job_arrival_times": job_arrival_times,
         },
         batch_size=[1],
     )
 
+
+    td["job_arrival_times"] =  _generate_random_job_arrivals(td["start_op_per_job"].size(0), td["start_op_per_job"].size(1),20)
     return td, num_jobs, num_machines, max_ops_per_job
 
 
@@ -108,3 +115,49 @@ def file2lines(loc: Union[Path, str]) -> List[List[int]]:
         return int(word) if "." not in word else int(float(word))
 
     return [[parse_num(x) for x in line.split()] for line in lines]
+
+
+####################################################################
+import numpy as np
+def _simulate_actual_processing_times(td) -> torch.Tensor:
+    """
+    generates actual processing times for operations on machines (stochastic processing time)
+        td = TensorDict of estimated processing times
+             -> (from _simulate_estimated_processing_times() )
+    NOTES:
+          1. variance can be adjusted
+          2. normal distribution can be changed
+    """
+    variance = 0.1
+    for i in range(td.shape[0]):
+        for j in range(td.shape[1]):
+            for z in range(td.shape[2]):
+                # here: Normal Distribution
+                stochastic_noise = np.random.normal(0, variance * td[i, j, z])
+                actual_time = max(0, td[i, j, z] + stochastic_noise)
+                td[i, j, z] = actual_time
+    return td
+
+# DYNAMIC JOB ARRIVAL
+def _generate_random_job_arrivals(bs, number_of_jobs, E_new):
+    """
+    From Smart scheduling of dynamic job shop based on discrete event simulation and deep reinforcement learning:
+    ` The arrival of subsequent new jobs follows a Poisson distribution, hence the interarrival time between
+    two successive new job is subjected to exponential distribution with average value Enew
+    Average value of interarrival time Enew is 20. `
+    """
+    job_arrival_times = []
+    for _ in range(bs):
+        exponential_distribution = torch.distributions.Exponential(1 / E_new)
+        interarrival_times_between_operations = exponential_distribution.sample(
+            (number_of_jobs,)
+        )
+
+        # cumulative sum to calculate the arrival times
+        # TODO: here i assummed that jobs are coming one after another
+        # but i can code them as totally independent too
+        arrival_time = torch.cumsum(interarrival_times_between_operations, 0)
+        job_arrival_times.append(arrival_time)
+    job_arrival_times = torch.stack(job_arrival_times)
+
+    return job_arrival_times

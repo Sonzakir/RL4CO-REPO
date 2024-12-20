@@ -154,6 +154,7 @@ class FJSPEnv(EnvBase):
             }
         )
 
+
         return td, n_ops_max
 
     def _reset(self, td: TensorDict = None, batch_size=None) -> TensorDict:
@@ -199,6 +200,7 @@ class FJSPEnv(EnvBase):
         # add additional features to tensordict
         td_reset["lbs"] = calc_lower_bound(td_reset)
         td_reset = self._get_features(td_reset)
+
 
         return td_reset
 

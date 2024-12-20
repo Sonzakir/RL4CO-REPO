@@ -11,9 +11,9 @@ from torch.nn.functional import one_hot
 
 
 from rl4co.envs.common.utils import Generator
+from rl4co.envs.scheduling.djssp.parser import get_max_ops_from_files, read
 from rl4co.utils.pylogger import get_pylogger
 
-from .parser import get_max_ops_from_files, read
 
 log = get_pylogger(__name__)
 
@@ -49,8 +49,7 @@ class DJSSPGenerator(Generator):
                                                             TIME : timestamp when the breakdown occurred
                                                             DURATION : duration of the breakdown
                                                             ] : machine breakdown of each machine
-            #TODO: machine breakdowns line by line machine 1 time duration
-            #TODO: job arrival time
+            job arrival times (batch_size , num_jobs): Each entry indicates the arrival time of the specific job
     """
 
     def __init__(
@@ -297,6 +296,7 @@ class DJSSPGenerator(Generator):
 
                     # machine failure occurence time
                     failure_occ_time = mtbf_distribtuion.sample().item() + current_time
+                    failure_occ_time = mtbf_distribtuion.sample().item() + current_time
                     # advance time
                     current_time += failure_occ_time
                     # the machine repair time
@@ -339,3 +339,103 @@ class DJSSPGenerator(Generator):
         return job_arrival_times
 
 
+
+# class DJSSPFileGenerator(Generator):
+#     """
+#     Data Generator for Dynamic Job Shop Scheduling Problem using instance files
+#
+#     Args:
+#         path: path to files
+#         n_ops_max: maximum number of operations per job
+#
+#     Returns:
+#         A TensorDict with the following keys:
+#                 start_op_per_job [batch_size, num_jobs]: first operation of each job
+#                 end_op_per_job [batch_size, num_jobs]: last operation of each job
+#                 proc_times  [batch_size, num_machines, num_operations( otal)]: stochastic job processing times ,
+#                 actual_proc_times [batch_size, num_machines, num_operations(total)]: actual job arrival times(just for documentation; not used),
+#                 pad_mask [batch_size, total_n_ops]: not all instances have the same number of ops, so padding is used ,
+#                 machine_breakdowns [batch_size , num_machines, num_breakdowns(of each machine)]: td entry containing the machine breakdowns
+#                     times and durations in each batch,
+#                 job_arrival_times [batch_size , num_jobs]: arrival time of each job in batches
+#
+#     """
+class DJSSPFileGenerator(Generator):
+    """Data generator for the Job-Shop Scheduling Problem (JSSP) using instance files
+
+    Args:
+        path: path to files
+
+    Returns:
+        A TensorDict with the following key:
+            start_op_per_job [batch_size, num_jobs]: first operation of each job
+            end_op_per_job [batch_size, num_jobs]: last operation of each job
+            proc_times [batch_size, num_machines, total_n_ops]: processing time of ops on machines
+            pad_mask [batch_size, total_n_ops]: not all instances have the same number of ops, so padding is used
+
+    """
+
+    def __init__(self, file_path: str, n_ops_max: int = None, **unused_kwargs):
+
+        self.files = (
+            [file_path] if os.path.isfile(file_path) else self.list_files(file_path)
+        )
+        self.num_samples = len(self.files)
+
+        if len(unused_kwargs) > 0:
+            log.error(f"Found {len(unused_kwargs)} unused kwargs: {unused_kwargs}")
+
+        if len(self.files) > 1:
+            n_ops_max = get_max_ops_from_files(self.files)
+
+        ret = map(partial(read, max_ops=n_ops_max), self.files)
+
+        td_list, num_jobs, num_machines, max_ops_per_job = list(zip(*list(ret)))
+        num_jobs, num_machines = map(lambda x: x[0], (num_jobs, num_machines))
+        max_ops_per_job = max(max_ops_per_job)
+
+        self.td = torch.cat(td_list, dim=0)
+        self.num_mas = num_machines
+        self.num_jobs = num_jobs
+        self.max_ops_per_job = max_ops_per_job
+        self.start_idx = 0
+
+    def _generate(self, batch_size: List[int]) -> TensorDict:
+        batch_size = np.prod(batch_size)
+        if batch_size > self.num_samples:
+            log.warning(
+                f"Only found {self.num_samples} instance files, but specified dataset size is {batch_size}"
+            )
+        end_idx = self.start_idx + batch_size
+        td = self.td[self.start_idx : end_idx]
+        self.start_idx += batch_size
+        if self.start_idx >= self.num_samples:
+            self.start_idx = 0
+
+        ## Add dynamic attributes
+        #E_new = 20  # Average inter-arrival time
+        #job_arrival_times = self._generate_random_job_arrivals(batch_size=(batch_size,),
+        #                                                       number_of_jobs=self.num_jobs,
+        #                                                       E_new=E_new)
+        #machine_breakdowns = self._simulate_machine_breakdowns_with_mtbf_mttr(
+        #    bs=(batch_size,), lambda_mtbf=20, lambda_mttr=3
+        #)
+#
+        #    # Update TensorDict with dynamic keys
+        ## Add the dynamic keys
+        #td = td.update({
+        #    "job_arrival_times": job_arrival_times,
+        #    "machine_breakdowns": machine_breakdowns
+        #})
+
+        return td
+
+    @staticmethod
+    def list_files(path):
+        files = [
+            os.path.join(path, f)
+            for f in os.listdir(path)
+            if os.path.isfile(os.path.join(path, f))
+        ]
+        assert len(files) > 0, "No files found in the specified path"
+        return files

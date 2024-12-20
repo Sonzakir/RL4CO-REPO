@@ -1,12 +1,11 @@
 import os
 
-from matplotlib.style.core import available
 from torchrl.data import Composite, Unbounded, Bounded
 
-from rl4co.envs.scheduling.djssp.generator import DJSSPGenerator
+from rl4co.envs.scheduling.djssp.generator import DJSSPGenerator, DJSSPFileGenerator
 from rl4co.envs.scheduling.fjsp import INIT_FINISH, NO_OP_ID
-from rl4co.envs.scheduling.fjsp.env import FJSPEnv
 from rl4co.envs.scheduling.fjsp.utils import calc_lower_bound
+from rl4co.envs.scheduling.jssp.env import JSSPEnv
 
 from rl4co.utils.ops import gather_by_index
 from einops import einsum, reduce
@@ -16,7 +15,7 @@ from torch._tensor import Tensor
 
 
 
-class DJSSPEnv(FJSPEnv):
+class DJSSPEnv(JSSPEnv):
     """Dynamic Job-Shop Scheduling Problem (DJSSP) environment
     At each step, the agent chooses a job. The operation to be processed next for the selected job is
     then executed on the associated machine. The reward is 0 unless the agent scheduled all operations of all jobs.
@@ -70,7 +69,7 @@ class DJSSPEnv(FJSPEnv):
         if generator is None:
             # TODO DJSSPFILE GENERATOR
             if generator_params.get("file_path", None) is not None:
-                generator = DJSSPGenerator(**generator_params)
+                generator = DJSSPFileGenerator(**generator_params)
             else:
                 generator = DJSSPGenerator(**generator_params)
 
@@ -102,7 +101,11 @@ class DJSSPEnv(FJSPEnv):
         num_eligible = torch.sum(ops_ma_adj, dim=1)
 
 
-        ma_breakdowns = self.generator._simulate_machine_breakdowns_with_mtbf_mttr(batch_size,lambda_mtbf=20 , lambda_mttr=3)
+        #ma_breakdowns = self.generator._simulate_machine_breakdowns_with_mtbf_mttr(batch_size,lambda_mtbf=20 , lambda_mttr=3)
+        ma_breakdowns = self._simulate_machine_breakdowns_(td_reset , lambda_mtbf=20 , lambda_mttr=3)
+        ################################################
+        # TODO: check if this one overrides when we dont have any file instance
+        td["job_arrival_times"] = torch.zeros((*batch_size, start_op_per_job.size(1)))
 
 
         td_reset = td_reset.update(
@@ -136,6 +139,7 @@ class DJSSPEnv(FJSPEnv):
         td_reset["lbs"] = calc_lower_bound(td_reset)
         td_reset = self._get_features(td_reset)
 
+
         return td_reset
 
 
@@ -162,9 +166,12 @@ class DJSSPEnv(FJSPEnv):
         another_batch_size = td["time"].shape[0]
         # print()
         # for batch_id in range(batch_size):
+        #print(td["machine_breakdowns"])
         for batch_id in range(len(machine_breakdowns)):
             for machine_idx in range(self.num_mas):
                 # breakdowns of the machine in the current batch
+                # print("BATCH_ID", batch_id)
+                # print("MACHINE_ID", machine_idx)
                 machine_idx_breakdowns = machine_breakdowns[batch_id][machine_idx]
                 for breakdown_no in range(len(machine_idx_breakdowns)):
                     # if current time == machine breakdown time
@@ -373,39 +380,53 @@ class DJSSPEnv(FJSPEnv):
 
         return td
 #######################################################################################################################
-    """
-    Currently the problem in here -> it does not let us to train the model
-    """
+
     def _transit_to_next_time(self, step_complete, td: TensorDict) -> TensorDict:
         """
-        Transit to the next time
-        """
+        Method to transit to the next time where either a machine becomes idle or a new job arrives
+        We transition to the next time step where step_complete is true and we update the given tensordict
+        with the new values
+        Args:
+            step_complete: boolean tensor indicating whether a batch is ready to transition
+            td: TensorDict containing information about the environment
 
+        Returns: updated tensordict and td["done"] indicating whether all operations are done
+
+        """
         # we need a transition to a next time step if either
         # 1.) all machines are busy
         # 2.) all operations are already currently in process (can only happen if num_jobs < num_machines)
         # 3.) idle machines can not process any of the not yet scheduled operations
         # 4.) no_op is choosen
-        # 5.) job is not yet arrived
+        # 5.) a job is arrived
 
         #available_time_ma = td["busy_until"]
+        # calculate the earliest time when a machine becomes IDLE again
+        # we want to transition to the next time step where a machine becomes idle again. This time step must be
+        # in the future, therefore we mask all machine idle times lying in the past / present
         available_time = (
             torch.where(
                 td["busy_until"] > td["time"][:, None], td["busy_until"], torch.inf
             ).min(1).values
         )
+        # check if a new job arrived at/before td["time"]
+        # if a job is not arrived set the value as infinity
+        # if a job has arrived set the values as the job arrival time
+        # take the earliest time
         next_job_arrival = td["job_arrival_times"].masked_fill(
             td["job_arrival_times"] <= td["time"].unsqueeze(1), torch.inf
         ).min(1).values
 
         end_op_per_job = td["end_op_per_job"]
-        # we want to transition to the next time step where a machine becomes idle again. This time step must be
-        # in the future, therefore we mask all machine idle times lying in the past / present
 
-        # Transit to the minimum of machine idle time or next job arrival time
+
+        # determine the earliest next time step.
+        # depending on the situation either transit to the earliest machine idle time
+        # or earliest next job arrival time
         next_time = torch.min(available_time, next_job_arrival)
         #assert not torch.any(next_time[step_complete].isinf())
         assert not torch.any(torch.isinf(next_time) & step_complete)
+        # advance to the next time step where the only steps have completed
         td["time"] = torch.where(step_complete, next_time, td["time"])
 
         # this may only be set when the operation is finished, not when it is scheduled
@@ -424,9 +445,9 @@ class DJSSPEnv(FJSPEnv):
 
         td["job_done"] = td["job_done"] + job_finished
         #td["done"] = td["job_done"].all(1, keepdim=True)
-        td["done"] = td["job_done"].all(1, keepdim=True) & (td["time"] >= td["job_arrival_times"].max(1).values).unsqueeze(1)
         # alternative checking if done -> then the current time must be greater than equal
         # latest job arrival time in each batch & (td["time"] >= td["job_arrival_times"].max(1).values).unsqueeze(1)
+        td["done"] = td["job_done"].all(1, keepdim=True) & (td["time"] >= td["job_arrival_times"].max(1).values).unsqueeze(1)
         return td, td["done"].squeeze(1)
 
     #######################################################################################################################
@@ -513,7 +534,10 @@ class DJSSPEnv(FJSPEnv):
         self.done_spec = Unbounded(shape=(1,), dtype=torch.bool)
 
 
-
+    @staticmethod
+    def load_data(fpath, batch_size=[]):
+        g = DJSSPFileGenerator(fpath)
+        return g(batch_size=batch_size)
 
 
 
@@ -570,6 +594,60 @@ class DJSSPEnv(FJSPEnv):
         action_mask.add_(next_ops_proc_times == 0)
 
         return action_mask
+
+    def _simulate_machine_breakdowns_(self, td, lambda_mtbf, lambda_mttr):
+
+        # The mean time between failure and mean time off line subject to exponential distribution
+        # (from E.S) assumin that MTBF-MTTR obey the exponential distribution
+        # TODO: or we can use torch.Tensor.exponential_ in here to
+        # TODO: what is the really difference ???
+        mtbf_distribtuion = torch.distributions.Exponential(1 / lambda_mtbf)
+        mttr_distribution = torch.distributions.Exponential(1 / lambda_mttr)
+        # In some papers seed are used to ensure reproducibility
+        torch.manual_seed(seed=77)
+
+        # In two paper Machine Failure Time Percentage is used but i dont understand the purpose of it
+        MFTp = lambda_mttr / (lambda_mttr + lambda_mtbf)
+
+
+        # [batch_number]  [breakdowns of the machine in the batch]
+        batch_breakdowns = []
+        for _ in range(td.size(0)):
+            # machine_idx_sorted version
+            # [machine_idx, occurence_time , duration]
+            breakdowns = {}
+
+            for machine_idx in range(0, self.num_mas):
+
+                current_time = 0
+
+                machine_idx_breakdowns = []
+                # TODO: harcoded maximal processing time !!!
+                while current_time < 10000:
+
+                    # machine failure occurence time
+                    failure_occ_time = mtbf_distribtuion.sample().item() + current_time
+                    failure_occ_time = mtbf_distribtuion.sample().item() + current_time
+                    # advance time
+                    current_time += failure_occ_time
+                    # the machine repair time
+                    machine_repair_time = mttr_distribution.sample().item()
+                    # machine cannot break again, while being repaired -> therefore advance the time
+                    current_time += machine_repair_time
+
+                    # still, current time must be less than max_processing time
+                    if 10000 >= current_time:
+                        machine_idx_breakdowns.append(
+                            {"TIME": failure_occ_time, "DURATION": machine_repair_time}
+                        )
+                    breakdowns[machine_idx] = machine_idx_breakdowns
+
+            batch_breakdowns.append(breakdowns)
+        return batch_breakdowns
+
+
+
+
 
     # This is my main method ESKI GET_JOB_MACHINE_AVAILABAILITJI
     # # TODO: Dynamic Job Arrival checks are implemented in here

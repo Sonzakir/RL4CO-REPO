@@ -37,9 +37,11 @@ def env_init_embedding(env_name: str, config: dict) -> nn.Module:
         "fjsp": FJSPInitEmbedding,
         "jssp": FJSPInitEmbedding,
         "mtvrp": MTVRPInitEmbedding,
+        "djsp": FJSPInitEmbedding,  # TODO: -> DJSPInitEmbedding
     }
 
     if env_name not in embedding_registry:
+        print(embedding_registry.keys())
         raise ValueError(
             f"Unknown environment name '{env_name}'. Available init embeddings: {embedding_registry.keys()}"
         )
