@@ -2,6 +2,7 @@ from collections import defaultdict
 
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 
 from matplotlib.colors import ListedColormap
 from tensordict.tensordict import TensorDict
@@ -45,8 +46,10 @@ def render(td: TensorDict, batch_no: int):
 
     _, ax = plt.subplots()
 
-    ############
-    max_time = 0
+    #for job arrival lines
+    arrival_times = td["job_arrival_times"][batch_no].tolist()
+    start_op = td["start_op_per_job"].squeeze(0)
+
 
     # Plot horizontal bars for each task
     for ma, ops in schedule.items():
@@ -67,6 +70,36 @@ def render(td: TensorDict, batch_no: int):
             ax.text(
                 start + (end - start) / 2, ma, op, ha="center", va="center", color="white"
             )
+
+            # Draw the job arrival line
+            if torch.isin(op, start_op):
+                for job_id, arrival_time in enumerate(arrival_times):
+                    if job_id == job:
+                        ax.plot(
+                            [arrival_time, arrival_time],  # x-axis
+                            [ma - 0.6, ma + 0.6],  # y-axis ; in range of machine section
+                            color="red",
+                            linestyle="--",
+                            linewidth=1,
+                        )
+                        # Annotate the dashed line below the x-axis
+                        ax.text(
+                                arrival_time,
+                                ma - 0.6,
+                                f"Job {job_id} ",
+                                rotation=90,
+                                va="top",  # Align the text to the top of the annotation point
+                                ha="center",
+                                color="red",
+                                fontsize=8,
+                        )
+
+
+
+
+
+
+
         # Determine the minimum and maximum times
         min_time = min(val[1].item() for val in assign)
         # 9999.0 -> operation is not scheduled
@@ -76,30 +109,31 @@ def render(td: TensorDict, batch_no: int):
         ax.set_xlim(min_time, max_time)
 
         # Highlight the job arrival times
-        # Highlight the job arrival times
-        arrival_times = td["job_arrival_times"][batch_no].tolist()  # Convert to list
-        for job_id, arrival_time in enumerate(arrival_times):
+        # arrival_times = td["job_arrival_times"][batch_no].tolist()  # Convert to list
 
-            # Only plot lines within the x-axis range
-            if min_time <= arrival_time <= max_time:
-                # Add dashed vertical line for each arrival time
-                ax.axvline(
-                    x=arrival_time,
-                    color="gray",
-                    linestyle="--",
-                    linewidth=1,
-                )
-                # Annotate the dashed line below the x-axis
-                ax.text(
-                    arrival_time,
-                    -1,  # Position the text below the x-axis
-                    f"Job {job_id} has arrived",
-                    rotation=90,
-                    va="top",  # Align the text to the top of the annotation point
-                    ha="center",
-                    color="gray",
-                    fontsize=8 ,
-                )
+        # for job_id, arrival_time in enumerate(arrival_times):
+        #
+        #     # Only plot lines within the x-axis range
+        #     if min_time <= arrival_time <= max_time:
+        #         # Add dashed vertical line for each arrival time
+        #         ax.axvline(
+        #             x=arrival_time,
+        #             color="gray",
+        #             linestyle="--",
+        #             linewidth=1,
+        #         )
+        #         # Annotate the dashed line below the x-axis
+        #         ax.text(
+        #             arrival_time,
+        #             -1,  # Position the text below the x-axis
+        #             f"Job {job_id}",
+        #             rotation=90,
+        #             va="top",  # Align the text to the top of the annotation point
+        #             ha="center",
+        #             color="red",
+        #             fontsize=8 ,
+        #         )
+
 
 
     # Set labels and title

@@ -295,7 +295,6 @@ class DJSSPEnv(JSSPEnv):
         td = self._get_features(td)
 
 
-        # # acaba sikinti buradan kaynakli mi oluyor diye kendime sormadan edemiyorum
         # if td["done"].all():
         #     render(td, 0)
 
