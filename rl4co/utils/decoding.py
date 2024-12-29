@@ -3,6 +3,7 @@ from time import sleep
 
 from typing import Optional, Tuple
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -313,9 +314,16 @@ class DecodingStrategy(metaclass=abc.ABCMeta):
                     else:
                         action = env.select_start_nodes(td, num_starts=self.num_starts)
 
-                #TODO: batchify problem
+
                 # Expand td to batch_size * num_starts
                 td = batchify(td, self.num_starts)
+
+                #TODO: batchify problem
+                if env.name=="djsp":
+                    for i in range(1, self.num_starts):
+                        td["machine_breakdowns"] = np.append(td["machine_breakdowns"], td["machine_breakdowns"][0])
+
+
 
 
 
