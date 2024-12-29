@@ -356,12 +356,12 @@ class DJSSPEnv(JSSPEnv):
                 # TODO: DO WE HAVE TO ADD <= 9999.0 in here
                 if((starting_time_of_operation < breakdown_time < finishing_time_of_operation) and (finishing_time_of_operation<9999.0000)):
                     # repairing time of the machine during execution is added
-                    print("before", td["finish_times"][batch_no,selected_operation_of_the_batch])
+                    # print("before", td["finish_times"][batch_no,selected_operation_of_the_batch])
                     td["finish_times"][batch_no,selected_operation_of_the_batch] += breakdown_duration
-                    print("after", td["finish_times"][batch_no,selected_operation_of_the_batch])
+                    # print("after", td["finish_times"][batch_no,selected_operation_of_the_batch])
                     # todo: check if this correctly calculates the finish time s yani eski finish time'i mi aliyor yenisini mi
                     td["busy_until"][batch_no,selected_machine_of_the_batch] = td["finish_times"][batch_no,selected_operation_of_the_batch]
-                    print("THIS OPERATION", selected_operation_of_the_batch)
+                    # print("THIS OPERATION", selected_operation_of_the_batch)
 
         # for batch_no in range(td.size(0)):
         #     print(len(td["machine_breakdowns"]))
