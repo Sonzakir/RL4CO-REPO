@@ -227,7 +227,10 @@ class ConstructivePolicy(nn.Module):
         # Main decoding: loop until all sequences are done
         step = 0
         while not td["done"].all():
+
             logits, mask = self.decoder(td, hidden, num_starts)
+
+
             td = decode_strategy.step(
                 logits,
                 mask,
@@ -238,7 +241,7 @@ class ConstructivePolicy(nn.Module):
             step += 1
             if step > max_steps:
                 log.error(
-                    f"Exceeded maximum number of steps ({max_steps}) duing decoding"
+                    f"Exceeded maximum number of steps ({max_steps}) during decoding"
                 )
                 break
 
@@ -265,4 +268,6 @@ class ConstructivePolicy(nn.Module):
         if return_init_embeds:
             outdict["init_embeds"] = init_embeds
 
+        #TODO:  when all operations are dispatched -> give the tensordict too
+        outdict["td"] = td
         return outdict

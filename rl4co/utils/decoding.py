@@ -313,8 +313,11 @@ class DecodingStrategy(metaclass=abc.ABCMeta):
                     else:
                         action = env.select_start_nodes(td, num_starts=self.num_starts)
 
+                #TODO: batchify problem
                 # Expand td to batch_size * num_starts
                 td = batchify(td, self.num_starts)
+
+
 
                 td.set("action", action)
                 td = env.step(td)["next"]
@@ -392,10 +395,6 @@ class DecodingStrategy(metaclass=abc.ABCMeta):
         """Select the action with the highest probability."""
         # [BS], [BS]
         selected = logprobs.argmax(dim=-1)
-        #TODO: delete this
-        # print("decoding.py / logprob" , logprobs)
-        # print("decoding.py / selected action" ,  selected)
-        # print("decoding.py / mask" , mask )
         if mask is not None:
             assert (
                 not (~mask).gather(1, selected.unsqueeze(-1)).data.any()

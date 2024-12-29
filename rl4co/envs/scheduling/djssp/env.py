@@ -1,13 +1,15 @@
 import os
 
+from IPython.core.display_functions import clear_output
 from torchrl.data import Composite, Unbounded, Bounded
 
 from rl4co.envs.scheduling.djssp.generator import DJSSPGenerator, DJSSPFileGenerator
 from rl4co.envs.scheduling.fjsp import INIT_FINISH, NO_OP_ID
+from rl4co.envs.scheduling.djssp.render import render
 from rl4co.envs.scheduling.fjsp.utils import calc_lower_bound
 from rl4co.envs.scheduling.jssp.env import JSSPEnv
 
-from rl4co.utils.ops import gather_by_index
+from rl4co.utils.ops import gather_by_index, sample_n_random_actions
 from einops import einsum, reduce
 import torch
 from tensordict.tensordict import TensorDict
@@ -67,7 +69,6 @@ class DJSSPEnv(JSSPEnv):
         **kwargs,
     ):
         if generator is None:
-            # TODO DJSSPFILE GENERATOR
             if generator_params.get("file_path", None) is not None:
                 generator = DJSSPFileGenerator(**generator_params)
             else:
@@ -102,7 +103,7 @@ class DJSSPEnv(JSSPEnv):
 
 
         #ma_breakdowns = self.generator._simulate_machine_breakdowns_with_mtbf_mttr(batch_size,lambda_mtbf=20 , lambda_mttr=3)
-        ma_breakdowns = self._simulate_machine_breakdowns_(td_reset , lambda_mtbf=20 , lambda_mttr=3)
+        ma_breakdowns = self._simulate_machine_breakdowns_(td_reset , lambda_mtbf=20 , lambda_mttr=3) #bunu silidigin
         ################################################
         # TODO: check if this one overrides when we dont have any file instance
         td["job_arrival_times"] = torch.zeros((*batch_size, start_op_per_job.size(1)))
@@ -130,7 +131,7 @@ class DJSSPEnv(JSSPEnv):
 
         )
 
-        #TODO: MACHINE_BREAKDOWNS_IN_RESET()
+        #MACHINE_BREAKDOWNS_IN_RESET()
         # check machine breakdowns and update td["busy_until"] if necessary
         td_reset = self._check_machine_breakdowns(td_reset)
 
@@ -164,9 +165,8 @@ class DJSSPEnv(JSSPEnv):
         # breakdown of all machines in all bathces
         machine_breakdowns = td["machine_breakdowns"]
         another_batch_size = td["time"].shape[0]
-        # print()
+
         # for batch_id in range(batch_size):
-        #print(td["machine_breakdowns"])
         for batch_id in range(len(machine_breakdowns)):
             for machine_idx in range(self.num_mas):
                 # breakdowns of the machine in the current batch
@@ -294,9 +294,14 @@ class DJSSPEnv(JSSPEnv):
         # add additional features to tensordict
         td = self._get_features(td)
 
+
+        # # acaba sikinti buradan kaynakli mi oluyor diye kendime sormadan edemiyorum
+        # if td["done"].all():
+        #     render(td, 0)
+
+
         return td
 
-    # TODO: Machine breakdown job interruption/delay will be implemented in here
     def _make_step(self, td: TensorDict) -> TensorDict:
 
         """
@@ -348,11 +353,42 @@ class DJSSPEnv(JSSPEnv):
                 finishing_time_of_operation = td["finish_times"][batch_no,selected_operation_of_the_batch].item()
                 # if during operation processing a machine breakdown occurs -> wait until machine is repaired
                 # and then process the operation
+                # TODO: DO WE HAVE TO ADD <= 9999.0 in here
                 if((starting_time_of_operation < breakdown_time < finishing_time_of_operation) and (finishing_time_of_operation<9999.0000)):
                     # repairing time of the machine during execution is added
+                    # print("before", td["finish_times"][batch_no,selected_operation_of_the_batch])
                     td["finish_times"][batch_no,selected_operation_of_the_batch] += breakdown_duration
+                    # print("after", td["finish_times"][batch_no,selected_operation_of_the_batch])
                     # todo: check if this correctly calculates the finish time s yani eski finish time'i mi aliyor yenisini mi
                     td["busy_until"][batch_no,selected_machine_of_the_batch] = td["finish_times"][batch_no,selected_operation_of_the_batch]
+                    # print("THIS OPERATION", selected_operation_of_the_batch)
+
+        # for batch_no in range(td.size(0)):
+        #     print(len(td["machine_breakdowns"]))
+        #     print(td.size(0))
+        #     print(batch_idx)
+        #     print(td["proc_times"].size())
+        #     selected_machine_of_the_batch = selected_machine[batch_no].item()
+        #     selected_operation_of_the_batch = selected_op[batch_no].item()
+        #     breakdowns_of_machine = td["machine_breakdowns"][batch_no][selected_machine_of_the_batch]
+        #     # iterate over each breakdown of the machine
+        #     for breakdown_no in range(len(breakdowns_of_machine)):
+        #         # breakdown occurence time
+        #         breakdown_time = breakdowns_of_machine[breakdown_no]["TIME"]
+        #         breakdown_duration = breakdowns_of_machine[breakdown_no]["DURATION"]
+        #         starting_time_of_operation = td["start_times"][batch_no,selected_operation_of_the_batch].item()
+        #         finishing_time_of_operation = td["finish_times"][batch_no,selected_operation_of_the_batch].item()
+        #         # if during operation processing a machine breakdown occurs -> wait until machine is repaired
+        #         # and then process the operation
+        #         # TODO: DO WE HAVE TO ADD <= 9999.0 in here
+        #         if((starting_time_of_operation < breakdown_time < finishing_time_of_operation) and (finishing_time_of_operation<9999.0000)):
+        #             # repairing time of the machine during execution is added
+        #             print("before", td["finish_times"][batch_no,selected_operation_of_the_batch])
+        #             td["finish_times"][batch_no,selected_operation_of_the_batch] += breakdown_duration
+        #             print("after", td["finish_times"][batch_no,selected_operation_of_the_batch])
+        #             # todo: check if this correctly calculates the finish time s yani eski finish time'i mi aliyor yenisini mi
+        #             td["busy_until"][batch_no,selected_machine_of_the_batch] = td["finish_times"][batch_no,selected_operation_of_the_batch]
+        #             print("THIS OPERATION", selected_operation_of_the_batch)
 
 
 
@@ -378,8 +414,17 @@ class DJSSPEnv(JSSPEnv):
         #     (~(td["op_scheduled"] + td["pad_mask"])).sum(1),  # num unscheduled ops
         # )
 
+        # Alternatively, these two lines can be used to render the environment at each step
+
+        # #clear_output()
+        # render(td,6)
+        # print(td["time"])
+        # print(len(td["machine_breakdowns"]))
+        # print(td["proc_times"].shape)
         return td
 #######################################################################################################################
+
+
 
     def _transit_to_next_time(self, step_complete, td: TensorDict) -> TensorDict:
         """
@@ -541,10 +586,9 @@ class DJSSPEnv(JSSPEnv):
 
 
 
-
     def _get_job_machine_availability(self, td: TensorDict):
         '''
-        False(0) -> action is feasible True(1)-> action is not feasible '??????
+        False(0) -> action is feasible True(1)-> action is not feasible
         Args:
             td: TensorDict representing the current state of the environment.
         Returns:
@@ -646,15 +690,27 @@ class DJSSPEnv(JSSPEnv):
         return batch_breakdowns
 
 
+    @staticmethod
+    def render(td, idx):
+        return render(td, idx)
+
+    def select_start_nodes(self, td: TensorDict, num_starts: int):
+        return sample_n_random_actions(td, num_starts)
 
 
 
-    # This is my main method ESKI GET_JOB_MACHINE_AVAILABAILITJI
-    # # TODO: Dynamic Job Arrival checks are implemented in here
+
+############################## UNUSED METHODDS #########################################################################
+
+
+
+
+
+    # This is my main method old GET_JOB_MACHINE_AVAILABAILITJI
+    #
     # def _get_job_machine_availability(self, td: TensorDict):
     #     batch_size = td.size(0)
     #
-    #     # TODO: CHECK_MACHINE_BREAKDOWNS_GET_JOB_MACHINE_AVAILABILITY
     #     td = self._check_machine_breakdowns(td)
     #
     #     # (bs, jobs, machines)
@@ -693,10 +749,7 @@ class DJSSPEnv(JSSPEnv):
     #             td["job_arrival_times"] has the form:
     #               ->td["job_arrival_times"][batch_no][arr_time_job1, arr_time_job2, ........]
     #     """
-    #     #TODO: this is the reason why we wait until operation 0 to finish
-    #     # Hayir problem burayla alakali degil, burayi comment out yapinca da diger operation'in baslamasi icin
-    #     # 0-operation'in bitmesini bekliyor.Burayi comment out yapinca sadece garip bir sekilde render methodu sanki
-    #     # hepsi ayni anda basliyormus gibi gösteriyor
+    #
     #     for batch_no in range(batch_size):
     #        for job_idx in range(0,self.num_jobs):
     #            boo = td["job_arrival_times"][batch_no][job_idx].le(td["time"])

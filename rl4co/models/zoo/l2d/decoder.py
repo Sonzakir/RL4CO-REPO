@@ -261,7 +261,7 @@ class L2DAttnPointer(PointerAttention):
         # bs = query.size(0)
         # (b m j)
         logits = super().forward(query, key, value, logit_key, attn_mask=attn_mask)
-        if self.env_name == "jssp":
+        if self.env_name == "jssp" or self.env_name == "djsp":
             # (b j)
             logits = logits.sum(1)
         elif self.env_name == "fjsp":

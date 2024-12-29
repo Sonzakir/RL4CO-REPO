@@ -178,6 +178,8 @@ class AttentionModelDecoder(AutoregressiveDecoder):
         if has_dyn_emb_multi_start:
             # if num_starts > 0 and we have some dynamic embeddings, we need to reshape them to [B*S, ...]
             # since keys and values are not shared across starts (i.e. the episodes modify these embeddings at each step)
+            if(type(cached)==tuple):
+                cached=cached[0]
             cached = cached.batchify(num_starts=num_starts)
 
         elif num_starts > 1:

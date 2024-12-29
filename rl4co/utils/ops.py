@@ -29,6 +29,7 @@ def batchify(
     >>> out.shape: [a*b*c, ...]
     """
     shape = [shape] if isinstance(shape, int) else shape
+
     for s in reversed(shape):
         x = _batchify_single(x, s) if s > 0 else x
     return x

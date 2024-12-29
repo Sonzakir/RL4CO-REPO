@@ -34,6 +34,7 @@ def env_dynamic_embedding(env_name: str, config: dict) -> nn.Module:
         "smtwtp": StaticEmbedding,
         "jssp": JSSPDynamicEmbedding,
         "fjsp": JSSPDynamicEmbedding,
+        "djsp": JSSPDynamicEmbedding, # todo: In order to train the model with attention policy and l2dppomodel i have added this manually
         "mtvrp": StaticEmbedding,
     }
 
