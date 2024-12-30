@@ -314,14 +314,19 @@ class DecodingStrategy(metaclass=abc.ABCMeta):
                     else:
                         action = env.select_start_nodes(td, num_starts=self.num_starts)
 
-
                 # Expand td to batch_size * num_starts
                 td = batchify(td, self.num_starts)
-
-                #TODO: batchify problem
-                if env.name=="djsp":
-                    for i in range(1, self.num_starts):
-                        td["machine_breakdowns"] = np.append(td["machine_breakdowns"], td["machine_breakdowns"][0])
+                # print("1" , td["machine_breakdowns"][0][0])
+                # print("2",td["machine_breakdowns"][1][0])
+                # print("3",td["machine_breakdowns"][2][0])
+                            #TODO: batchify problem
+                # print("td[try].shape", td["try"].shape)
+                # if env.name=="djsp":
+                #     while len(td["machine_breakdowns"])<td.size(0):
+                #         # TODO: here i have added the first machine breakdown
+                #         #do i need to make batch based or the machine breakdowns same in the all environment
+                #         #TODO: test this out
+                #         td["machine_breakdowns"] = np.append(td["machine_breakdowns"], td["machine_breakdowns"][0])
 
 
 
@@ -429,10 +434,23 @@ class DecodingStrategy(metaclass=abc.ABCMeta):
     def _select_best(self, logprobs, actions, td: TensorDict, env: RL4COEnvBase):
         rewards = env.get_reward(td, actions)
         _, max_idxs = unbatchify(rewards, self.num_starts).max(dim=-1)
+        # print("unbatchify is called", len(td["machine_breakdowns"]))
+        # print("unbatchify is called proc_times", td["proc_times"].shape)
 
         actions = unbatchify_and_gather(actions, max_idxs, self.num_starts)
         logprobs = unbatchify_and_gather(logprobs, max_idxs, self.num_starts)
         td = unbatchify_and_gather(td, max_idxs, self.num_starts)
+
+        # handle unbatchify of the machine breakdowns
+        # expected batch size after the unbatchify
+        # new_bs = td.size(0)
+        # if env.name=="djsp":
+        #     if(len(td["machine_breakdowns"]) > new_bs):
+        #         # truncate nd array to new batch size
+        #         td["machine_breakdowns"] = td["machine_breakdowns"][:new_bs]
+        # print("unbatchify and gather is called len(tdmachine_breakdowns)", len(td["machine_breakdowns"]))
+        # print("unbatchify and gather is called proc_times", td["proc_times"].shape)
+        # print("td[try].shape" , td["try"].shape)
 
         return logprobs, actions, td, env
 
@@ -616,3 +634,5 @@ class BeamSearch(DecodingStrategy):
         self.beam_path.append(beam_parent)
 
         return selected, batch_beam_idx
+
+

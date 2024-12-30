@@ -194,6 +194,9 @@ class DJSSPGenerator(Generator):
             batch_size, self.mtbf, self.mttr
         )
 
+
+
+
         # Dynamic Job arrival times
         arrival_times = self._generate_random_job_arrivals( batch_size,
                                                             number_of_jobs = self.num_jobs ,
@@ -206,14 +209,90 @@ class DJSSPGenerator(Generator):
                 "proc_times": actual_proc_times,                        #TODO: estimated -> actual_proc_times
                 "actual_proc_times": actual_proc_times,          # stochastic processing time
                 "pad_mask": pad_mask,
-                "machine_breakdowns": breakdown_list,               #  machine breakdowns
+                #"machine_breakdowns": breakdown_list,               #  machine breakdowns
                 "job_arrival_times" : arrival_times              # TODO: job arrival times
             },
             batch_size=batch_size,
         )
 
+        # TODO: NEWLY ADDED MACHINE BREAKDOWN!
+        ma_breakdowns = self._simulate_machine_breakdowns_(td,self.mtbf,self.mttr)
+        tensor_shape = (*batch_size, self.num_mas, 33)
+        example_tensor = torch.zeros(tensor_shape)
+        # print("this is example_tensor", example_tensor)
+        for batch_no in range(*batch_size):
+            breakdowns_in_batch =ma_breakdowns[batch_no]
+            for machine_no in range(0, len(breakdowns_in_batch)):
+                current_machine = breakdowns_in_batch[machine_no]
+                for breakdown_no in range(len(current_machine)):
+                    # not ücüncü dimebsion'i 16 yaptigim icin buraya 16 dedim, oraya basla bir sayi yazarsam degistirmem gerekecek tabi ki
+                    # cift sayili indexler breakdown time'lari
+                    example_tensor[batch_no, machine_no, (breakdown_no * 2)] = current_machine[breakdown_no]["TIME"]
+                    # tek sayili indexler ise breakdown duration'lari
+                    example_tensor[batch_no, machine_no, (breakdown_no * 2 + 1)] = current_machine[breakdown_no][
+                        "DURATION"]
+        td["machine_breakdowns"] = example_tensor
+
+
+        # print("------------------------------------------")
+        # print("THis is the machine breakdowns in generator",td["machine_breakdowns"])
+        # print("------------------------------------------")
+
 
         return td
+
+    # this is the last added simulate_machine_breakdowns
+    # to ensure consistency with the environment
+    def _simulate_machine_breakdowns_(self, td, lambda_mtbf, lambda_mttr):
+
+        # The mean time between failure and mean time off line subject to exponential distribution
+        # (from E.S) assumin that MTBF-MTTR obey the exponential distribution
+        # TODO: or we can use torch.Tensor.exponential_ in here to
+        # TODO: what is the really difference ???
+        mtbf_distribtuion = torch.distributions.Exponential(1 / lambda_mtbf)
+        mttr_distribution = torch.distributions.Exponential(1 / lambda_mttr)
+        # In some papers seed are used to ensure reproducibility
+        torch.manual_seed(seed=77)
+
+        # In two paper Machine Failure Time Percentage is used but i dont understand the purpose of it
+        MFTp = lambda_mttr / (lambda_mttr + lambda_mtbf)
+
+
+        # [batch_number]  [breakdowns of the machine in the batch]
+        batch_breakdowns = []
+        for _ in range(td.size(0)):
+            # machine_idx_sorted version
+            # [machine_idx, occurence_time , duration]
+            breakdowns = {}
+
+            for machine_idx in range(0, self.num_mas):
+
+                current_time = 0
+
+                machine_idx_breakdowns = []
+                # TODO: harcoded maximal processing time !!!
+                while current_time < 10000:
+
+                    # machine failure occurence time
+                    failure_occ_time = mtbf_distribtuion.sample().item() + current_time
+                    failure_occ_time = mtbf_distribtuion.sample().item() + current_time
+                    # advance time
+                    current_time += failure_occ_time
+                    # the machine repair time
+                    machine_repair_time = mttr_distribution.sample().item()
+                    # machine cannot break again, while being repaired -> therefore advance the time
+                    current_time += machine_repair_time
+
+                    # still, current time must be less than max_processing time
+                    if 10000 >= current_time:
+                        machine_idx_breakdowns.append(
+                            {"TIME": failure_occ_time, "DURATION": machine_repair_time}
+                        )
+                    breakdowns[machine_idx] = machine_idx_breakdowns
+
+            batch_breakdowns.append(breakdowns)
+        return batch_breakdowns
+
 
     # For simualting machine breakdowns without considering MTBF-MTOL
     # currently  NOT USED

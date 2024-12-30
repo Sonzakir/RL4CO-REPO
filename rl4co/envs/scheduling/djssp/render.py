@@ -50,7 +50,6 @@ def render(td: TensorDict, batch_no: int):
     arrival_times = td["job_arrival_times"][batch_no].tolist()
     start_op = td["start_op_per_job"].squeeze(0)
 
-
     # Plot horizontal bars for each task
     for ma, ops in schedule.items():
         for op, start, end in ops:
@@ -93,6 +92,8 @@ def render(td: TensorDict, batch_no: int):
                                 color="red",
                                 fontsize=8,
                         )
+        # print(inst["proc_times"].shape)
+        # print(len(inst["machine_breakdowns"]))
 
 
 
@@ -108,31 +109,6 @@ def render(td: TensorDict, batch_no: int):
         # Set the x-axis range
         ax.set_xlim(min_time, max_time)
 
-        # Highlight the job arrival times
-        # arrival_times = td["job_arrival_times"][batch_no].tolist()  # Convert to list
-
-        # for job_id, arrival_time in enumerate(arrival_times):
-        #
-        #     # Only plot lines within the x-axis range
-        #     if min_time <= arrival_time <= max_time:
-        #         # Add dashed vertical line for each arrival time
-        #         ax.axvline(
-        #             x=arrival_time,
-        #             color="gray",
-        #             linestyle="--",
-        #             linewidth=1,
-        #         )
-        #         # Annotate the dashed line below the x-axis
-        #         ax.text(
-        #             arrival_time,
-        #             -1,  # Position the text below the x-axis
-        #             f"Job {job_id}",
-        #             rotation=90,
-        #             va="top",  # Align the text to the top of the annotation point
-        #             ha="center",
-        #             color="red",
-        #             fontsize=8 ,
-        #         )
 
 
 
