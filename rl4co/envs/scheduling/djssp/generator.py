@@ -206,11 +206,11 @@ class DJSSPGenerator(Generator):
             {
                 "start_op_per_job": start_op_per_job,
                 "end_op_per_job": end_op_per_job,
-                "proc_times": actual_proc_times,                        #TODO: estimated -> actual_proc_times
+                "proc_times": actual_proc_times,                        # estimated -> actual_proc_times
                 "actual_proc_times": actual_proc_times,          # stochastic processing time
                 "pad_mask": pad_mask,
                 #"machine_breakdowns": breakdown_list,               #  machine breakdowns
-                "job_arrival_times" : arrival_times              # TODO: job arrival times
+                "job_arrival_times" : arrival_times              #  job arrival times
             },
             batch_size=batch_size,
         )
@@ -218,25 +218,20 @@ class DJSSPGenerator(Generator):
         # TODO: NEWLY ADDED MACHINE BREAKDOWN!
         ma_breakdowns = self._simulate_machine_breakdowns_(td,self.mtbf,self.mttr)
         tensor_shape = (*batch_size, self.num_mas, 33)
-        example_tensor = torch.zeros(tensor_shape)
-        # print("this is example_tensor", example_tensor)
+        machine_breakdown_tensor = torch.zeros(tensor_shape)
+        # print("this is machine_breakdown_tensor", machine_breakdown_tensor)
         for batch_no in range(*batch_size):
             breakdowns_in_batch =ma_breakdowns[batch_no]
             for machine_no in range(0, len(breakdowns_in_batch)):
                 current_machine = breakdowns_in_batch[machine_no]
                 for breakdown_no in range(len(current_machine)):
-                    # not ücüncü dimebsion'i 16 yaptigim icin buraya 16 dedim, oraya basla bir sayi yazarsam degistirmem gerekecek tabi ki
-                    # cift sayili indexler breakdown time'lari
-                    example_tensor[batch_no, machine_no, (breakdown_no * 2)] = current_machine[breakdown_no]["TIME"]
-                    # tek sayili indexler ise breakdown duration'lari
-                    example_tensor[batch_no, machine_no, (breakdown_no * 2 + 1)] = current_machine[breakdown_no][
-                        "DURATION"]
-        td["machine_breakdowns"] = example_tensor
-
-
-        # print("------------------------------------------")
-        # print("THis is the machine breakdowns in generator",td["machine_breakdowns"])
-        # print("------------------------------------------")
+                    # Note: I set the third dimension to 16, so I used 16 here. If I change that value later,
+                    # I will need to update this accordingly
+                    # Even-numbered indices represent breakdown times
+                    machine_breakdown_tensor[batch_no, machine_no, (breakdown_no * 2)] = current_machine[breakdown_no]["TIME"]
+                    # Odd-numbered indices represent breakdown durations
+                    machine_breakdown_tensor[batch_no, machine_no, (breakdown_no * 2 + 1)] = current_machine[breakdown_no]["DURATION"]
+        td["machine_breakdowns"] = machine_breakdown_tensor
 
 
         return td
