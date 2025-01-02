@@ -47,12 +47,15 @@ def render(td: TensorDict, batch_no: int):
     _, ax = plt.subplots()
 
     #for job arrival lines
+    #TODO: here td[] or inst[] ?
     arrival_times = td["job_arrival_times"][batch_no].tolist()
     start_op = td["start_op_per_job"].squeeze(0)
+
 
     # Plot horizontal bars for each task
     for ma, ops in schedule.items():
         for op, start, end in ops:
+
             # job of the operation
             job = inst["job_ops_adj"][:, op].nonzero().item()
             # x-axis(horizontal) bar
@@ -92,8 +95,39 @@ def render(td: TensorDict, batch_no: int):
                                 color="red",
                                 fontsize=8,
                         )
-        # print(inst["proc_times"].shape)
-        # print(len(inst["machine_breakdowns"]))
+            # mark all the machine breakdowns
+            for index in range(int((inst["machine_breakdowns"][ma].size(0)) / 2)):
+                breakdown_time = inst["machine_breakdowns"][ma, index * 2]
+                breakdown_duration = inst["machine_breakdowns"][ma, index * 2 + 1]
+                ax.barh(
+                    ma,  # y-axis of operation (machine)
+                    breakdown_duration,  # operation duration
+                    left=breakdown_time,  # starting position
+                    height=1,  #  0.6 idi
+                    color="red",
+                    edgecolor="red",
+                    linewidth=1,
+                )
+
+
+            # mark the breakdowns only when a machine is operating on a job
+            # shape [number_of_machines , num_max_breakdowns]
+            # inst["machine_breakdowns"]
+            # iterate over each breakdown-duration pairs
+            # for index  in range(int((inst["machine_breakdowns"][ma].size(0))/2)):
+            #     breakdown_time = inst["machine_breakdowns"][ma,index*2]
+            #     if (start < breakdown_time < end):
+            #         breakdown_duration = inst["machine_breakdowns"][ma, index * 2 +1 ]
+            #         ax.barh(
+            #             ma,  # y-axis of operation (machine)
+            #             breakdown_duration,  # operation duration
+            #             left=breakdown_time,  # starting position
+            #             height=1, # bvuradi 0.6 idi
+            #             color="red",
+            #             edgecolor="red",
+            #             linewidth=1,
+            #         )
+
 
 
 

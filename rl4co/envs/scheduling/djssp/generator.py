@@ -332,8 +332,8 @@ class DJSSPGenerator(Generator):
 
         return machine_breakdowns
 
-    # TODO : as in many papers, i am going to implement machine breakdowns using the MTBF-MTOL
-    # TODO: here MTBF and MTTR can be optionally attribute of the environment
+    #  as in many papers, i am going to implement machine breakdowns using the MTBF-MTOL
+    # here MTBF and MTTR can be optionally attribute of the environment
     # non-chronological : machine sorted version
     # from the real time scheduling in job manufacturing paper
     def _simulate_machine_breakdowns_with_mtbf_mttr(self, bs, lambda_mtbf, lambda_mttr):
@@ -345,7 +345,7 @@ class DJSSPGenerator(Generator):
         ), "MTTR cannot be greater than maximum processing time"
         # The mean time between failure and mean time off line subject to exponential distribution
         # (from E.S) assumin that MTBF-MTTR obey the exponential distribution
-        # TODO: or we can use torch.Tensor.exponential_ in here to
+        # or we can use torch.Tensor.exponential_ in here to
         # TODO: what is the really difference ???
         mtbf_distribtuion = torch.distributions.Exponential(1 / lambda_mtbf)
         mttr_distribution = torch.distributions.Exponential(1 / lambda_mttr)
@@ -415,26 +415,7 @@ class DJSSPGenerator(Generator):
 
 
 
-# class DJSSPFileGenerator(Generator):
-#     """
-#     Data Generator for Dynamic Job Shop Scheduling Problem using instance files
-#
-#     Args:
-#         path: path to files
-#         n_ops_max: maximum number of operations per job
-#
-#     Returns:
-#         A TensorDict with the following keys:
-#                 start_op_per_job [batch_size, num_jobs]: first operation of each job
-#                 end_op_per_job [batch_size, num_jobs]: last operation of each job
-#                 proc_times  [batch_size, num_machines, num_operations( otal)]: stochastic job processing times ,
-#                 actual_proc_times [batch_size, num_machines, num_operations(total)]: actual job arrival times(just for documentation; not used),
-#                 pad_mask [batch_size, total_n_ops]: not all instances have the same number of ops, so padding is used ,
-#                 machine_breakdowns [batch_size , num_machines, num_breakdowns(of each machine)]: td entry containing the machine breakdowns
-#                     times and durations in each batch,
-#                 job_arrival_times [batch_size , num_jobs]: arrival time of each job in batches
-#
-#     """
+
 class DJSSPFileGenerator(Generator):
     """Data generator for the Job-Shop Scheduling Problem (JSSP) using instance files
 

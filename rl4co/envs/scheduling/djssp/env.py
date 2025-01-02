@@ -1,6 +1,8 @@
+import collections
 import os
 
 from IPython.core.display_functions import clear_output
+from ortools.sat.python import cp_model
 from torchrl.data import Composite, Unbounded, Bounded
 
 from rl4co.envs.scheduling.djssp.generator import DJSSPGenerator, DJSSPFileGenerator
@@ -124,8 +126,8 @@ class DJSSPEnv(JSSPEnv):
         # td["machine_breakdowns"] = machine_breakdown_tensor
         ################################################
         # TODO: check if this one overrides when we dont have any file instance
-        td["job_arrival_times"] = torch.zeros((*batch_size, start_op_per_job.size(1)))
-        print(td["job_arrival_times"])
+        #td["job_arrival_times"] = torch.zeros((*batch_size, start_op_per_job.size(1)))
+        #print(td["job_arrival_times"])
 
 
         td_reset = td_reset.update(
@@ -831,3 +833,713 @@ class DJSSPEnv(JSSPEnv):
         return td
 
 
+    def get_op_ma_proctime(self,td):
+        """
+        helper function to get operation-machine-processing time attributes for each operation
+        which will be used in google OR-TOOLS
+        NOTE: This method extracts only the information from the first batch (batch 0)
+        Args:
+            td: tensorDict (observation after reset)
+
+        Returns:
+            array fin of size number of operation
+                where each index of the fin is a sub array with the values
+                [operation ID , machineID , processing time of operation]
+        """
+        # (num_mas , num_op)
+        data = torch.tensor(td["proc_times"][0])
+        column_id , row_id , process_time = [] , [] , []
+
+        # iterate through each column in data
+        # where each column represents an operation
+        for column_no in range(data.size(1)):
+            # op_column = all rows of the current column
+            op_column = data[:,column_no]
+
+            # non-zero row in column = machine id
+            machine_id = torch.nonzero(op_column, as_tuple=True)[0].item()
+            proc_time_of_operation = op_column[machine_id].item()
+            column_id.append(column_no)
+            row_id.append(machine_id)
+            process_time.append(proc_time_of_operation)
+
+        fin = []
+        for op , machine , proc_time in zip (column_id , row_id , process_time):
+            fin.append([op,machine,proc_time])
+
+        return  fin
+
+    import collections
+    from ortools.sat.python import cp_model
+
+    def OR_TOOLS(self,td):
+        # job arrival times
+        arrival_times = td["job_arrival_times"][0]
+
+        # [[operation_id, machine_id, proc_time]]
+        fin = self.get_op_ma_proctime(td)
+
+        # create the jobs_data array
+        # [ job [machine_no , proc_time]]
+        jobs_data = []
+        num_jobs = td["start_op_per_job"].size(1)
+
+        # add empty array for each job in jobs_data
+        for i in range(num_jobs):
+            jobs_data.append([])
+
+        for x in range((num_jobs * num_jobs + 1) - 1):
+            # her job esit sayida operation'a sahip
+            job_no = x // num_jobs
+            # task (machine_id , processing_time)
+            task = (fin[x][1], fin[x][2])
+            jobs_data[job_no].append(task)
+
+        # horizon = torch.sum(td["proc_times"][0]).item()
+        horizon = sum(op[2] for op in fin)
+
+        # declare the model
+        model = cp_model.CpModel()
+
+        # define the variables
+        # create a named tuple to store information about created varibles
+        task_type = collections.namedtuple("task_type", "start end interval")
+
+        # create a named tuple to manipulate solution information
+        assigned_task_type = collections.namedtuple("assigned_task_type", "start job index duration")
+
+        # create job intervals and add to the corresponding MACHINE LIST
+        all_task = {}
+        machine_to_intervals = collections.defaultdict(list)
+
+        all_machines = range(self.num_mas)
+
+        # OR-Tools does not support float type numbers therefore we reound all of them
+
+        for job_id, job in enumerate(jobs_data):
+            for task_id, task in enumerate(job):
+                # get the machine id and the duration from the task
+                machine, duration = task
+                # AttributeError: 'float' object has no attribute 'get_integer_var_value_map'
+                duration = int(duration) + 1
+                suffix = f"_{job_id}_{task_id}"
+                # Create an integer variable with domain [lb, ub]. [0,horizon] "start time of the specific task"
+                # TypeError: __init__(): incompatible constructor arguments. The following argument types are supported:
+                # 1. ortools.util.python.sorted_interval_list.Domain(arg0: int, arg1: int)
+                # Invoked with: 0, 1929.2211356163025
+                horizon = int(horizon) + 1
+                # start time of the task is created here
+                job_arrival_time = int(arrival_times[job_id].item()) + 1
+
+                # start_var = model.new_int_var(0 , horizon , "start"+ suffix)
+                start_var = model.new_int_var(job_arrival_time, horizon, "start" + suffix)
+
+                # create ending time of the specific task using constraint programming model (end_0_0...)
+                # final/end time of the specific task is created here
+                # end_var = model.new_int_var(0, horizon , "end"+ suffix)
+                end_var = model.new_int_var(job_arrival_time, horizon, "end" + suffix)
+                #  create interval variable from start_var duration end_var (interval_0_2.....)
+                interval_var = model.new_interval_var(
+                    start_var, duration, end_var, "interval" + suffix
+                )
+
+                # TODO: machine breakdowns
+                # create updated_end variable to use if there is a machine breakdown
+                updated_end = model.new_int_var(0, horizon, "adjusted_end" + suffix)
+                # extract the breakdowns of the machine
+                breakdowns = td["machine_breakdowns"][0, machine]
+                # extract the breakdown occurrence times
+                occurrences = breakdowns[::2]  # to get the only even indices (occurrence times)
+                # extract the breakdown durations
+                durations = breakdowns[1::2]  # to get the only odd indices (durations)
+
+                # we need to add constraint on breakdown
+                for breakdwn_no in range(occurrences.size(0) - 1):
+                    # occurence time
+                    occ_time = int(occurrences[breakdwn_no].item())
+                    # duration
+                    duration = int(durations[breakdwn_no].item()) + 1
+                    # i have padded the tensor with values 0 if there is no breakdown, therefore ignore these
+                    if occ_time == 0 and duration == 0:
+                        continue
+                    # todo: burayi comment out yaptim
+                    # check if breakdown happens when an operation is being processed on machine
+                    # create condition variable
+                    breakdown_condition = model.new_bool_var(f"breakdown_{suffix}_{breakdwn_no}")
+                    # same logic as in makestep
+                    # operation starts before breakdown ends
+                    model.add(start_var < (occ_time + duration)).only_enforce_if(breakdown_condition)
+                    # operation ends after breakdowns starts
+                    model.add((start_var + duration) > occ_time).only_enforce_if(breakdown_condition)
+
+                    # if there is breakdown add duration to the updated end
+                    model.add(updated_end == end_var + duration).only_enforce_if(breakdown_condition)
+
+                # if there is no breakdown during operaion then updated_end  = end_var
+                no_breakdown = model.new_bool_var(f"no_breakdown_{suffix}")
+                model.add(updated_end == end_var).only_enforce_if(no_breakdown)
+                model.add_bool_or([no_breakdown] + [model.new_bool_var(f"breakdown_{suffix}_{idx}") for idx in
+                                                    range(occurrences.size(0))])
+
+                # add all the task's with start,interval,end informations in all_task dict
+                all_task[job_id, task_id] = task_type(
+                    start=start_var,
+                    end=end_var,
+                    interval=interval_var
+                )
+                #            end = updated_end,
+
+                # add at each machine index the operations/tasks interval where it containes start, end, duration
+                machine_to_intervals[machine].append(interval_var)
+
+        # DEFINE THE CONSTRAINTS
+
+        # create and add disjunctive constraints
+        for machine in all_machines:
+            # use add_no_overlap method to create no overlap constrains
+            # to prevent tasks for the same machine from overlapping time
+            model.add_no_overlap(machine_to_intervals[machine])
+
+        # precedences inside a job
+        for job_id, job in enumerate(jobs_data):
+            for task_id in range(len(job) - 1):
+                model.add(
+                    all_task[job_id, task_id + 1].start >= all_task[job_id, task_id].end
+                )
+
+        # Makespan objective
+        # create a new integer variable for the makespan (obj_var is the makespan)
+        obj_var = model.new_int_var(0, horizon, "makespan")  # makespan(0..21)
+
+        # add constraint to make sthe makespan to the last task of all jobs
+        # obj_var(makespan) is equal to latest end time of all task
+        # obj_var == max (ebd times of all tasks)
+        model.add_max_equality(
+            obj_var, [all_task[job_id, len(job) - 1].end for job_id, job in enumerate(jobs_data)],
+        )
+
+        # set objective to minimize the makespan
+        model.minimize(obj_var)
+
+        solver = cp_model.CpSolver()
+        status = solver.solve(model)
+        # Check if solution was found
+        if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
+            print("Solution:")
+            # Create one list of assigned tasks per machine
+            # keys = mcahine IDs (0,1,2.---)
+            # values = list of tasks assigned to each machine
+            assigned_jobs = collections.defaultdict(list)
+            # iterate through all jobs
+            for job_id, job in enumerate(jobs_data):
+                # job_id = ID of the job 0,1,2..
+                # job = list of tasks for that job [(0, 3), (1, 2), (2, 2)]
+
+                # iterate over tasks for that job
+                for task_id, task in enumerate(job):
+                    # task_id = index of the task in job  0,1,2..
+                    # task tuple (0, 3) : (machine_id, proc_time)
+
+                    machine = task[0]
+                    # add tasks details to the machines list
+                    assigned_jobs[machine].append(
+                        assigned_task_type(
+                            start=solver.value(all_task[job_id, task_id].start),
+                            job=job_id,
+                            index=task_id,
+                            duration=task[1],
+                        )
+                    )
+            # Create per machine output lines.
+            output = ""
+            for machine in all_machines:
+                # Sort by starting time.
+                assigned_jobs[machine].sort()
+                sol_line_tasks = "Machine " + str(machine) + ": "
+                sol_line = "              "
+
+                for assigned_task in assigned_jobs[machine]:
+                    name = f"job_{assigned_task.job}_task_{assigned_task.index}       "
+                    # add spaces to output to align columns.
+                    sol_line_tasks += f"{name:15}"
+                    # TODO: !!!!!!!!
+                    start = assigned_task.start
+                    duration = assigned_task.duration
+                    sol_tmp = f"[{start},{start + duration}]"
+                    # add spaces to output to align columns.
+                    sol_line += f"{sol_tmp:15}"
+
+                sol_line += "\n"
+                sol_line_tasks += "\n"
+                output += sol_line_tasks
+                output += sol_line
+
+            # Finally print the solution found.
+            print(f"Optimal Schedule Length: {solver.objective_value}")
+            print(output)
+        else:
+            print("No solution found.")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+            
