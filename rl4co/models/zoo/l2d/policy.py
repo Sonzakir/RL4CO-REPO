@@ -50,7 +50,10 @@ class L2DPolicy(AutoregressivePolicy):
         if encoder is None:
             if stepwise_encoding:
                 encoder = NoEncoder()
-            elif env_name == "fjsp" or (env_name == "jssp" and het_emb):
+            # hetGNN implementation for dynamic job shop scheduling
+            # otherwise no_ops, job_emb  Sizes of tensors must match except in dimension 1.
+            # Expected size 2x but got size x for tensor number 1 in the list.
+            elif env_name == "fjsp" or (env_name == "jssp" and het_emb) or (het_emb and env_name == "djsp") :
                 encoder = HetGNNEncoder(
                     env_name=env_name,
                     embed_dim=embed_dim,
