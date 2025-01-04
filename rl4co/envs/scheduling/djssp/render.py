@@ -14,6 +14,7 @@ log = get_pylogger(__name__)
 
 def render(td: TensorDict, batch_no: int):
 
+    # detach the tensordict from the gpu to avoid errors
     td = td.detach().cpu()
 
 
@@ -29,7 +30,7 @@ def render(td: TensorDict, batch_no: int):
     # extract machine-operation matrix
     assign = inst["ma_assignment"].nonzero()
 
-
+    # init schedule dictionary with key: machines values: operationID,dispatch time, termination time
     schedule = defaultdict(list)
 
     # iterate over machine-operation assignments
@@ -95,45 +96,39 @@ def render(td: TensorDict, batch_no: int):
                                 color="red",
                                 fontsize=8,
                         )
-            # mark all the machine breakdowns
-            for index in range(int((inst["machine_breakdowns"][ma].size(0)) / 2)):
-                breakdown_time = inst["machine_breakdowns"][ma, index * 2]
-                breakdown_duration = inst["machine_breakdowns"][ma, index * 2 + 1]
-                ax.barh(
-                    ma,  # y-axis of operation (machine)
-                    breakdown_duration,  # operation duration
-                    left=breakdown_time,  # starting position
-                    height=1,  #  0.6 idi
-                    color="red",
-                    edgecolor="red",
-                    linewidth=1,
-                )
+            # # mark all the machine breakdowns (creates messy plot)
+            # for index in range(int((inst["machine_breakdowns"][ma].size(0)) / 2)):
+            #     breakdown_time = inst["machine_breakdowns"][ma, index * 2]
+            #     breakdown_duration = inst["machine_breakdowns"][ma, index * 2 + 1]
+            #     ax.barh(
+            #         ma,  # y-axis of operation (machine)
+            #         breakdown_duration,  # operation duration
+            #         left=breakdown_time,  # starting position
+            #         height=1,  #  0.6 idi
+            #         color="red",
+            #         edgecolor="red",
+            #         linewidth=1,
+            #     )
 
 
             # mark the breakdowns only when a machine is operating on a job
             # shape [number_of_machines , num_max_breakdowns]
             # inst["machine_breakdowns"]
             # iterate over each breakdown-duration pairs
-            # for index  in range(int((inst["machine_breakdowns"][ma].size(0))/2)):
-            #     breakdown_time = inst["machine_breakdowns"][ma,index*2]
-            #     if (start < breakdown_time < end):
-            #         breakdown_duration = inst["machine_breakdowns"][ma, index * 2 +1 ]
-            #         ax.barh(
-            #             ma,  # y-axis of operation (machine)
-            #             breakdown_duration,  # operation duration
-            #             left=breakdown_time,  # starting position
-            #             height=1, # bvuradi 0.6 idi
-            #             color="red",
-            #             edgecolor="red",
-            #             linewidth=1,
-            #         )
-
-
-
-
-
-
-
+            for index  in range(int((inst["machine_breakdowns"][ma].size(0))/2)):
+                # get all the breakdown occurence times
+                breakdown_time = inst["machine_breakdowns"][ma,index*2]
+                if (start < breakdown_time < end):
+                    breakdown_duration = inst["machine_breakdowns"][ma, index * 2 +1 ]
+                    ax.barh(
+                        ma,  # y-axis of operation (machine)
+                        breakdown_duration,  # x-axis; breakdown duration
+                        left=breakdown_time,  # starting position(occurence time)
+                        height=1,
+                        color="red",
+                        edgecolor="red",
+                        linewidth=1,
+                    )
 
         # Determine the minimum and maximum times
         min_time = min(val[1].item() for val in assign)

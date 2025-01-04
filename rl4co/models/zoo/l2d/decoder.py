@@ -186,7 +186,9 @@ class L2DDecoder(AutoregressiveDecoder):
         super(L2DDecoder, self).__init__()
 
         if feature_extractor is None and stepwise:
-            if env_name == "fjsp" or (het_emb and env_name == "jssp"):
+            # hetGNN implementation for dynamic job shop scheduling
+            # otherwise no_ops, job_emb  Sizes of tensors must match except in dimension 1. Expected size 2x but got size x for tensor number 1 in the list.
+            if env_name == "fjsp" or (het_emb and env_name == "jssp") or (het_emb and env_name == "djsp"):
                 feature_extractor = HetGNNEncoder(
                     env_name=env_name,
                     embed_dim=embed_dim,
