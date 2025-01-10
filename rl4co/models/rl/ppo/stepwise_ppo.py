@@ -1,4 +1,5 @@
 import copy
+import time
 
 from typing import Any, Union
 
@@ -137,7 +138,7 @@ class StepwisePPO(RL4COLitModule):
         self.policy_old.load_state_dict(self.policy.state_dict())
         outs = {k: torch.stack([dic[k] for dic in outs], dim=0) for k in outs[0]}
         return outs
-
+    import time
     def shared_step(
         self, batch: Any, batch_idx: int, phase: str, dataloader_idx: int = None
     ):
@@ -149,6 +150,7 @@ class StepwisePPO(RL4COLitModule):
                     td = self.policy_old.act(next_td, self.env, phase="train")
                 # get next state
                 next_td = self.env.step(td)["next"]
+
                 # get reward of action
                 reward = self.env.get_reward(next_td, None)
                 reward = self.scaler(reward)

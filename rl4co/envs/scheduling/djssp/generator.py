@@ -190,7 +190,10 @@ class DJSSPGenerator(Generator):
         proc_times = proc_times * ops_machine_adj.transpose(1, 2)
         # in JSSP there is only one machine capable to process an operation
         assert (proc_times > 0).sum(1).eq(1).all()
-        return proc_times.to(torch.float32)
+        # rounded
+        # return proc_times.to(torch.float32)
+        return torch.round(proc_times , decimals=1)
+
 ####################################################################################################
     def generate_machine_breakdowns(self,batch_size, num_machines, num_breakdowns, lambda_mtbf, lambda_mttr, max_time=10000):
         """
@@ -202,7 +205,7 @@ class DJSSPGenerator(Generator):
             num_breakdowns (int): Maximum number of breakdowns per machine.
             lambda_mtbf (float): Mean time between failures.
             lambda_mttr (float): Mean time to repair.
-            max_time (int): Maximum simulation time.
+            max_time (int): Maximum simulation time. (upper bound)
 
         Returns:
             torch.Tensor: Shape (batch_size, num_machines, num_breakdowns * 2).
@@ -239,7 +242,8 @@ class DJSSPGenerator(Generator):
         # Reshape breakdowns tensor to match expected output (batch_size, num_machines, num_breakdowns * 2)
         breakdowns = breakdowns.reshape(batch_size, num_machines, num_breakdowns * 2)
 
-        return breakdowns
+        # round the machine breakdowns  this can be adjusted https://pytorch.org/docs/main/generated/torch.round.html
+        return torch.round(breakdowns)
 
 ###########################################################################################################################
         # torch.manual_seed(77)
@@ -470,7 +474,10 @@ class DJSSPGenerator(Generator):
         #     job_arrival_times.append(arrival_time)
         # job_arrival_times = torch.stack(job_arrival_times)
         #######################################################################
-        return job_arrival_times
+        # rounded
+        # return job_arrival_times
+        return torch.round(job_arrival_times , decimals= 3)
+
 
     def _generate(self, batch_size) -> TensorDict:
         # simulate how many operations each job has

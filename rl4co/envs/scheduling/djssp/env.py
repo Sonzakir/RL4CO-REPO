@@ -142,8 +142,110 @@ class DJSSPEnv(JSSPEnv):
         return td_reset
 
 
+    # #TODO COPY PASTE FROM GITHUB
+    # # WARNING: Maybe here we have to clone the tensordict
+    # def _check_machine_breakdowns(self, td: TensorDict ):
+    #     """
+    #         Method to check for machine breakdowns in the environment.
+    #         - td["machine_breakdowns"] is a tensor with the shape [batch_size, number of machines, number of maximum breakdowns].
+    #         - The number of maximum breakdowns is currently set to 33 in the generator/environment.
+    #         - Here, the times at which breakdowns occur correspond to entries where the number of maximum breakdowns is
+    #         an even number, and the duration of that breakdown is given by the subsequent entry.
+    #             - Occurence time of the first breakdown in batch x , machine y -> td["machine_breakdowns"][ x , y , 0 ]
+    #             - The duration of the  first breakdown in batch x , machine y -> td["machine_breakdowns"][ x , y , 1 ]
+    #         - Meaning
+    #             - Breakdown occurence times td["machine_breakdowns"][batch_idx , machine_idx , x ] , where x= 0,2,4,6,8,....32
+    #             - Breakdown duration times td["machine_breakdowns"][batch_idx , machine_idx , y ] , where x= 1,3,5,7,9,.....33
+    #
+    #
+    #         Args:
+    #             td: The state of the environment at the current time step (td["time"]).
+    #
+    #         Returns:
+    #             The updated td with the modified td["busy_until"] entry.
+    #             If a machine has a breakdown at the current time step (td["time"])
+    #             -> the "busy_until" entry for that machine is adjusted to the time step when the machine is repaired.
+    #     """
+    #
+    #     # shape : (batch_size, num_mas ,  number_of_max_breakdowns *2 )
+    #     machine_breakdowns = td["machine_breakdowns"]
+    #     # get the current time of each batch
+    #     # add dimension at the last index for brodcasting
+    #     # before unsqueeze (batch_size,) -> after: (batch_size,1)
+    #     current_time = td["time"].unsqueeze(-1)
+    #     # overwrite busy_until entry to indicate machine breakdown
+    #     # shape : (batch_size, num_mas)
+    #     busy_until = td["busy_until"]
+    #
+    #     # Get the machine breakdown occurence times and duration times
+    #
+    #     # even indices represesting the breakdown occurence times
+    #     # therefore: select all element from the first dim(bs) and second dim (num_mas) and
+    #     # select only even indices from the third dim (machine_breakdowns)
+    #     # shape : (batch_size , num_mas , number_of_max_breakdowns)
+    #     tensor_breakdown_occ_times = machine_breakdowns[:, :, 0::2]
+    #
+    #     # same here: odd indices representing the breakdown duration times
+    #     # shape : (batch_size , num_mas , number_of_max_breakdowns)
+    #     tensor_brekdown_durations = machine_breakdowns[:, :, 1::2]
+    #
+    #     # boolean tensor to check if a breakdown occurs at the current time
+    #     # shape : (batch_size , num_mas , number_of_max_breakdowns)
+    #     # bool_breakdown[x,y,z]= True -> in batch x ; machine y; z.breakdown occurs at the current decision time td["time"][x]
+    #     # we need to add one dimension to the current time to match the shapes (e.g. to make both 3D tensors)
+    #     bool_breakdown = (tensor_breakdown_occ_times == current_time.unsqueeze(-1))
+    #
+    #     # filter/ mask the inactive machine breakdown durations
+    #     # and helps to reduce the computing time
+    #     # if breakdown occurs get the duration from the breakdown durations tensor
+    #     # otherwise  fill it with 0
+    #     # shape : (batch_size , num_mas , number_of_max_breakdowns)
+    #     curr_brekadown_durations = torch.where(bool_breakdown, tensor_brekdown_durations, torch.zeros_like(tensor_brekdown_durations))
+    #
+    #     # Find the first active breakdown for each machine
+    #     # calculate the sum of the breakdown duration for each machine (total breakdown time)
+    #     # shape : (batch_size , num_mas )
+    #     sum_duration_time = curr_brekadown_durations.sum(dim=-1)
+    #
+    #     # expand current time to have the same shape as busy_until (batch_size, num_machines)
+    #     expanded_current_time = current_time.expand(-1, busy_until.size(1))
+    #
+    #     # update the busy_until
+    #     # if there is a breakdown : machine is busy(not available) until -> " current_time + duration of the breakdown"
+    #     # othwerise do not busy_until entry remains unchanged
+    #     td["busy_until"] = torch.where(
+    #         sum_duration_time > 0,  # If a breakdown occurs
+    #         expanded_current_time + sum_duration_time,  # Add active breakdown durations
+    #         busy_until,  # Retain the original value if no breakdown occurs
+    #     )
+    #
+    #
+    #    ##########################################################################################################
+    #     # old version (performance issues with attention model)
+    #     # (bs , num_mas ,  n_max_breakdowns)
+    #     # machine_breakdowns = td["machine_breakdowns"]
+    #     #
+    #     # for batch_id in range(machine_breakdowns.size(0)):
+    #     #     for machine_idx in range(machine_breakdowns.size(1)):
+    #     #         # breakdowns of the machine in the current batch
+    #     #         machine_idx_breakdowns = machine_breakdowns[batch_id,machine_idx]
+    #     #         for breakdown_no in range(int(machine_breakdowns.size(2)/2)):
+    #     #             # 0-2-4-6-8...-> breakdown occurence time
+    #     #             # 1-3-5-7-9...-> breakdown duration
+    #     #             # if current time == machine breakdown time
+    #     #             # if machine_idx_breakdowns[breakdown_no]["TIME"] == td["time"][batch_id]:
+    #     #             if machine_idx_breakdowns[(breakdown_no)*2] == td["time"][batch_id]:
+    #     #                 # duration of the breakdown
+    #     #                 duration = machine_idx_breakdowns[(breakdown_no)*2 +1 ]
+    #     #                 # machine is busy(not available) until -> " current_time + duration of the breakdown"
+    #     #                 td["busy_until"][batch_id][machine_idx] = td["time"][batch_id] + duration
+    #     return td
 
-    # WARNING: Maybe here we have to clone the tensordict
+
+
+
+
+#     # WARNING: Maybe here we have to clone the tensordict
     def _check_machine_breakdowns(self, td: TensorDict ):
         """
             Method to check for machine breakdowns in the environment.
@@ -181,7 +283,7 @@ class DJSSPEnv(JSSPEnv):
 
         # even indices represesting the breakdown occurence times
         # therefore: select all element from the first dim(bs) and second dim (num_mas) and
-        # select only even indices from the third dim (machine_breakdowns)
+        # select only even indices from the third dim (breakdown occurence times)
         # shape : (batch_size , num_mas , number_of_max_breakdowns)
         tensor_breakdown_occ_times = machine_breakdowns[:, :, 0::2]
 
@@ -189,35 +291,76 @@ class DJSSPEnv(JSSPEnv):
         # shape : (batch_size , num_mas , number_of_max_breakdowns)
         tensor_brekdown_durations = machine_breakdowns[:, :, 1::2]
 
+        ############################################################################
+        # TODO: buraya gel
+        #bool_breakdown = (tensor_breakdown_occ_times <= current_time.unsqueeze(-1) <= torch.add(tensor_breakdown_occ_times ,tensor_brekdown_durations))
+        # Compute the two comparisons separately
+        # is_after_start = tensor_breakdown_occ_times <= current_time.unsqueeze(-1)
+        is_after_start = torch.lt(tensor_breakdown_occ_times, current_time.unsqueeze(-1))
+
+        ## is_before_end = current_time.unsqueeze(-1) <= torch.add(tensor_breakdown_occ_times, tensor_brekdown_durations)
+        ten = torch.add(tensor_breakdown_occ_times, tensor_brekdown_durations)
+        is_before_end = torch.lt(current_time.unsqueeze(-1), ten)
+
+        ## Combine the results using element-wise logical AND
+        ## bool_breakdown = is_after_start & is_before_end
+        bool_breakdown2 = torch.logical_and(is_after_start, is_before_end)
+
+        curr_brekadown_durations = torch.where(
+            bool_breakdown2,
+            tensor_brekdown_durations,
+            torch.zeros_like(tensor_brekdown_durations)
+        )
+
+        ## Sum active breakdown durations along the breakdown dimension
+        #sum_duration_time = torch.sum(tensor_brekdown_durations * bool_breakdown2, dim=-1)
+#
+        ## Expand current_time to match the shape of busy_until for broadcasting
+        #expanded_current_time = current_time.expand_as(busy_until)
+#
+        ## Update busy_until using torch.where
+        #td["busy_until"] = torch.where(
+        #    sum_duration_time > 0,  # Condition: If a breakdown occurs
+        #    expanded_current_time + sum_duration_time,  # New value: current time + breakdown durations
+        #    busy_until  # Original value: retain existing busy_until
+        #)
+        # print(bool_breakdown2)
+        ####################################################################################
+
         # boolean tensor to check if a breakdown occurs at the current time
         # shape : (batch_size , num_mas , number_of_max_breakdowns)
         # bool_breakdown[x,y,z]= True -> in batch x ; machine y; z.breakdown occurs at the current decision time td["time"][x]
         # we need to add one dimension to the current time to match the shapes (e.g. to make both 3D tensors)
-        bool_breakdown = (tensor_breakdown_occ_times == current_time.unsqueeze(-1))
+        # bool_breakdown = (tensor_breakdown_occ_times == current_time.unsqueeze(-1))
 
-        # filter/ mask the inactive machine breakdown durations
-        # and helps to reduce the computing time
-        # if breakdown occurs get the duration from the breakdown durations tensor
-        # otherwise  fill it with 0
-        # shape : (batch_size , num_mas , number_of_max_breakdowns)
-        curr_brekadown_durations = torch.where(bool_breakdown, tensor_brekdown_durations, torch.zeros_like(tensor_brekdown_durations))
 
-        # Find the first active breakdown for each machine
-        # calculate the sum of the breakdown duration for each machine (total breakdown time)
-        # shape : (batch_size , num_mas )
-        sum_duration_time = curr_brekadown_durations.sum(dim=-1)
+#         # filter/ mask the inactive machine breakdown durations
+#         # and helps to reduce the computing time
+#         # if breakdown occurs get the duration from the breakdown durations tensor
+#         # otherwise  fill it with 0
+#         # shape : (batch_size , num_mas , number_of_max_breakdowns)
+#         curr_brekadown_durations = torch.where(
+#             bool_breakdown,
+#             tensor_brekdown_durations,
+#             torch.zeros_like(tensor_brekdown_durations)
+#         )
 
-        # expand current time to have the same shape as busy_until (batch_size, num_machines)
-        expanded_current_time = current_time.expand(-1, busy_until.size(1))
+#         # Find the first active breakdown for each machine
+#         # calculate the sum of the breakdown duration for each machine (total breakdown time)
+#         # shape : (batch_size , num_mas )
+#         sum_duration_time = curr_brekadown_durations.sum(dim=-1)
 
-        # update the busy_until
-        # if there is a breakdown : machine is busy(not available) until -> " current_time + duration of the breakdown"
-        # othwerise do not busy_until entry remains unchanged
-        td["busy_until"] = torch.where(
-            sum_duration_time > 0,  # If a breakdown occurs
-            expanded_current_time + sum_duration_time,  # Add active breakdown durations
-            busy_until,  # Retain the original value if no breakdown occurs
-        )
+#         # expand current time to have the same shape as busy_until (batch_size, num_machines)
+#         expanded_current_time = current_time.expand(-1, busy_until.size(1))
+
+#         # update the busy_until
+#         # if there is a breakdown : machine is busy(not available) until -> " current_time + duration of the breakdown"
+#         # othwerise do not busy_until entry remains unchanged
+#         td["busy_until"] = torch.where(
+#             sum_duration_time > 0,  # If a breakdown occurs
+#             expanded_current_time + sum_duration_time,  # Add active breakdown durations
+#             busy_until,  # Retain the original value if no breakdown occurs
+#         )
 
 
        ##########################################################################################################
@@ -307,6 +450,7 @@ class DJSSPEnv(JSSPEnv):
 
 
     def _step(self, td: TensorDict):
+
         # cloning required to avoid inplace operation which avoids gradient backtracking
         td = td.clone()
 
@@ -357,8 +501,6 @@ class DJSSPEnv(JSSPEnv):
         # if td["done"].all():
         #     render(td, 0)
 
-
-
         return td
 
     def _make_step(self, td: TensorDict) -> TensorDict:
@@ -401,30 +543,115 @@ class DJSSPEnv(JSSPEnv):
             If there is a machine breakdown in time interval [td["start_times"] - td["finish_times"]]
                 Then td["finish_times"] = td["finish_times"] + machine repair time
         """
+        #################################################################################
+###########################################################################################################
+        # # Assume the tensors are defined and populated as described earlier
+        machine_breakdowns = td["machine_breakdowns"]  # [batch_size, num_machines, num_breakdowns * 2]
+        start_times = td["start_times"]  # [batch_size, num_operations]
+        finish_times = td["finish_times"]  # [batch_size, num_operations]
+        busy_until = td["busy_until"]  # [batch_size, num_machines]
+        #selected_machine = td["selected_machine"]  # [batch_size]
+        #selected_op = td["selected_op"]  # [batch_size]
 
-        for batch_no in range(td["machine_breakdowns"].size(0)):
-            # machine on which action will be performed
-            selected_machine_of_the_batch = selected_machine[batch_no].item()
-            # action == operation
-            selected_operation_of_the_batch = selected_op[batch_no].item()
-            # breakdowns of the selected machine in the form [duration , duration , time, duration,....]
-            breakdowns_of_machine = td["machine_breakdowns"][batch_no,selected_machine_of_the_batch]
+        batch_indices = torch.arange(machine_breakdowns.size(0), device=machine_breakdowns.device)
 
-            # iterate over each breakdown time-duration pair
-            for breakdown_no in range(int(breakdowns_of_machine.size(0)/2)):
-                # breakdown occurrence time
-                breakdown_time = breakdowns_of_machine[ breakdown_no * 2 ]
-                # breakdown duration
-                breakdown_duration = breakdowns_of_machine[ breakdown_no*2+1 ]
-                starting_time_of_operation = td["start_times"][batch_no,selected_operation_of_the_batch].item()
-                finishing_time_of_operation = td["finish_times"][batch_no,selected_operation_of_the_batch].item()
-                # if during operation processing a machine breakdown occurs -> wait until machine is repaired
-                # and then process the operation
-                if((starting_time_of_operation < breakdown_time < finishing_time_of_operation)
-                            and (finishing_time_of_operation<9999.0000)):
-                    # repairing time of the machine during execution is added
-                    td["finish_times"][batch_no,selected_operation_of_the_batch] += breakdown_duration
-                    td["busy_until"][batch_no,selected_machine_of_the_batch] = td["finish_times"][batch_no,selected_operation_of_the_batch]
+        # Gather breakdowns for the selected machines
+        selected_machine_breakdowns = machine_breakdowns[
+            batch_indices, selected_machine]  # [batch_size, num_breakdowns * 2]
+        breakdown_times = selected_machine_breakdowns[:, ::2]  # [batch_size, num_breakdowns]
+        breakdown_durations = selected_machine_breakdowns[:, 1::2]  # [batch_size, num_breakdowns]
+
+        # Gather operation start and finish times for the selected operations
+        starting_times = start_times[batch_indices, selected_op]  # [batch_size]
+        finishing_times = finish_times[batch_indices, selected_op]  # [batch_size]
+
+        # Create a copy of finishing_times to update iteratively
+        updated_finishing_times = finishing_times.clone()
+
+
+        num_breakdowns = breakdown_times.size(1)
+        for breakdown_idx in range(num_breakdowns):
+            # occurrence time
+            occ_time = breakdown_times[:, breakdown_idx]
+            # breakdown duration
+            brk_dur = breakdown_durations[:, breakdown_idx]
+
+
+            # machine is being reapaired
+            mask_ttr = torch.le(occ_time,starting_times)  & \
+                       torch.lt(starting_times , (occ_time+brk_dur)) & \
+                   torch.le(updated_finishing_times , 9999.0)
+
+
+            # mask_ttr = ((starting_times >= occ_time)) & \
+            #            (starting_times < occ_time + brk_dur) & \
+            #            (updated_finishing_times <= 9999.0)
+
+            # # # wait until machine is repair
+
+            updated_finishing_times = torch.where(
+                mask_ttr,
+              updated_finishing_times + (occ_time + brk_dur - starting_times) ,#  occ_time + brk_dur + proc_time_of_action ,    #TODO: here logic can be wrong
+                updated_finishing_times
+            )
+
+
+
+            # job interrupt due to machine breakdown during processin
+            # Mask for overlapping breakdowns
+            mask = ((starting_times < occ_time) ) & \
+                   (occ_time < updated_finishing_times) & \
+                   (updated_finishing_times < 9999.0)
+
+
+            # Update finishing times where the mask is true
+            updated_finishing_times = torch.where(
+                mask,
+                updated_finishing_times + brk_dur,
+                updated_finishing_times
+            )
+
+
+            # TODO: WHEN THE MACHINE IS NOT WORKING ?????
+
+            # | ((breakdown_time  starting_times) & (starting_times<(breakdown_time + breakdown_duration)))
+        # print(f"before batch_no {batch_indices} operation {selected_op}" , td["finish_times"][batch_indices, selected_op] )
+        # Write back the updated finish times to the tensor
+        finish_times[batch_indices, selected_op] = updated_finishing_times
+        # print("485" ,td["finish_times"][batch_indices, selected_op])
+        td["finish_times"][batch_indices, selected_op] = updated_finishing_times
+        # print("488" ,td["finish_times"][batch_indices, selected_op])
+
+        # print(f"after batch_no {batch_indices} operation {selected_op}" , td["finish_times"][batch_indices, selected_op] )
+
+        # Update busy_until for the selected machines
+        #TODO: check if busy_until updated correctly
+        busy_until[batch_indices, selected_machine] = updated_finishing_times
+################################################################################################################
+        ################################################################################
+        # for batch_no in range(td["machine_breakdowns"].size(0)):
+        #     # machine on which action will be performed
+        #     selected_machine_of_the_batch = selected_machine[batch_no].item()
+        #     # action == operation
+        #     selected_operation_of_the_batch = selected_op[batch_no].item()
+        #     # breakdowns of the selected machine in the form [duration , duration , time, duration,....]
+        #     breakdowns_of_machine = td["machine_breakdowns"][batch_no,selected_machine_of_the_batch]
+        #
+        #     # iterate over each breakdown time-duration pair
+        #     for breakdown_no in range(int(breakdowns_of_machine.size(0)/2)):
+        #         # breakdown occurrence time
+        #         breakdown_time = breakdowns_of_machine[ breakdown_no * 2 ]
+        #         # breakdown duration
+        #         breakdown_duration = breakdowns_of_machine[ breakdown_no*2+1 ]
+        #         starting_time_of_operation = td["start_times"][batch_no,selected_operation_of_the_batch].item()
+        #         finishing_time_of_operation = td["finish_times"][batch_no,selected_operation_of_the_batch].item()
+        #         # if during operation processing a machine breakdown occurs -> wait until machine is repaired
+        #         # and then process the operation
+        #         if((starting_time_of_operation < breakdown_time < finishing_time_of_operation)
+        #                     and (finishing_time_of_operation<9999.0000)):
+        #             # repairing time of the machine during execution is added
+        #             td["finish_times"][batch_no,selected_operation_of_the_batch] += breakdown_duration
+        #             td["busy_until"][batch_no,selected_machine_of_the_batch] = td["finish_times"][batch_no,selected_operation_of_the_batch]
 
 #############################################################################################################################################
         # removed before job interrupt check
@@ -631,6 +858,7 @@ class DJSSPEnv(JSSPEnv):
                 then in batch x the job y on machine z is available(feasible) and can be scheduled.
             If an entry [x][y][z] = True  (Exclude)
                 then in batch x the job y on machine z is not available(feasible) and  therefore can't be dispatched
+        1 indicates machine or job is unavailable at current time step
 
 
         '''
@@ -638,10 +866,11 @@ class DJSSPEnv(JSSPEnv):
         # TODO: CHECK_MACHINE_BREAKDOWNS_GET_JOB_MACHINE_AVAILABILITY
         td = self._check_machine_breakdowns(td)
 
-        # (bs, jobs, machines)
+        #(bs, jobs, machines)
         action_mask = torch.full((batch_size, self.num_jobs, self.num_mas), False).to(
             td.device
         )
+
 
         ###############MASK JOBS THAT ARE NOT ARRIVED YET######################################
         # mask jobs that are not arrived yet
@@ -977,28 +1206,6 @@ class DJSSPEnv(JSSPEnv):
                 durations = breakdowns[1::2]  # to get the only odd indices (durations)
 
 
-                #######################################################################################################
-                # for breakdwn_no in range(occurrences.size(0)):
-                #     occ_time = int(occurrences[breakdwn_no].item())
-                #     # duration
-                #     duration = int(durations[breakdwn_no].item()) + 1
-                #
-                #     if occ_time == 0 and duration == 0:
-                #         continue
-                #
-                #     # Define Boolean variables for each condition
-                #     task_finishes_before_breakdown = model.new_bool_var(
-                #         f"finishes_before_breakdown_{job_id}_{task_id}_{breakdwn_no}")
-                #     task_starts_after_breakdown = model.new_bool_var(
-                #         f"starts_after_breakdown_{job_id}_{task_id}_{breakdwn_no}")
-                #
-                #     # Link conditions to Boolean variables
-                #     model.add(start_var + duration <= occ_time).only_enforce_if(
-                #         task_finishes_before_breakdown)  # Use task[1] for duration
-                #     model.add(start_var >= (occ_time + duration)).only_enforce_if(task_starts_after_breakdown)
-                #
-                #     # Ensure at least one condition holds
-                #     model.add_bool_or([task_finishes_before_breakdown, task_starts_after_breakdown])
 
                 #######################################################################################################
                 # # we need to add constraint on breakdown
@@ -1014,13 +1221,15 @@ class DJSSPEnv(JSSPEnv):
                     # create condition variable
                     breakdown_condition = model.new_bool_var(f"breakdown_{suffix}_{breakdwn_no}")
                     # same logic as in makestep
+                    model.add(start_var>=occ_time).only_enforce_if(breakdown_condition)
                     # operation starts before breakdown ends
-                    model.add(start_var < (occ_time + duration)).only_enforce_if(breakdown_condition)
+                    #model.add(start_var < (occ_time + breakdown_duration)).only_enforce_if(breakdown_condition)
                     # operation ends after breakdowns starts
-                    model.add((start_var + duration) > occ_time).only_enforce_if(breakdown_condition)
+                    #model.add((start_var + duration) > occ_time).only_enforce_if(breakdown_condition)
 
                     # if there is breakdown add duration to the updated end
-                    model.add(updated_end == end_var + duration).only_enforce_if(breakdown_condition)
+                    model.add(updated_end == end_var + breakdown_duration).only_enforce_if(breakdown_condition)
+
 
                 # if there is no breakdown during operaion then updated_end  = end_var
                 no_breakdown = model.new_bool_var(f"no_breakdown_{suffix}")
@@ -1033,7 +1242,7 @@ class DJSSPEnv(JSSPEnv):
                 # add all the task's with start,interval,end informations in all_task dict
                 all_task[job_id, task_id] = task_type(
                     start=start_var,
-                    end=end_var,     #            end = updated_end,
+                    end=updated_end,     #            end = updated_end,
                     interval=interval_var
                 )
 
