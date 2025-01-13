@@ -442,17 +442,17 @@ class DJSSPEnv(JSSPEnv):
             brk_dur = breakdown_durations[:, breakdown_idx]
 
             ## # machine is being reapaired
-            #mask_ttr = torch.le(occ_time,starting_times)  & \
-            #           torch.lt(starting_times , (occ_time+brk_dur)) & \
-            #       torch.le(updated_finishing_times , 9999.0)
+            mask_ttr = torch.le(occ_time,starting_times)  & \
+                       torch.lt(starting_times , (occ_time+brk_dur)) & \
+                   torch.le(updated_finishing_times , 9999.0)
 #
-            ## # # wait until machine is repair
+            # # # wait until machine is repair
 #
-            #updated_finishing_times = torch.where(
-            #    mask_ttr,
-            #  updated_finishing_times + (occ_time + brk_dur - starting_times) ,
-            #    updated_finishing_times
-            #)
+            updated_finishing_times = torch.where(
+                mask_ttr,
+              updated_finishing_times + (occ_time + brk_dur - starting_times) ,
+                updated_finishing_times
+            )
 
 
             # job interrupt due to machine breakdown during processin
