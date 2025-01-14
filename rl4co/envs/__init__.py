@@ -39,7 +39,6 @@ ENV_REGISTRY = {
     "ffsp": FFSPEnv,
     "jssp": JSSPEnv,
     "djssp": DJSSPEnv,
-    "djsp": DJSSPEnv,            #TODO: here clean up
     "fjsp": FJSPEnv,
     "mdpp": MDPPEnv,
     "mtsp": MTSPEnv,

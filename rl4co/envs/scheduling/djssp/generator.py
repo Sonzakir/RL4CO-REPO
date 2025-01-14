@@ -210,7 +210,8 @@ class DJSSPGenerator(Generator):
         Returns:
             torch.Tensor: Shape (batch_size, num_machines, num_breakdowns * 2).
         """
-        torch.manual_seed(77)
+        #TODO: In some papers seed are used to ensure reproducibility
+        #torch.manual_seed(90)
 
         # Exponential distributions for MTBF and MTTR
         mtbf_distribution = torch.distributions.Exponential(1 / lambda_mtbf)
@@ -245,47 +246,7 @@ class DJSSPGenerator(Generator):
         # round the machine breakdowns  this can be adjusted https://pytorch.org/docs/main/generated/torch.round.html
         return torch.round(breakdowns)
 
-###########################################################################################################################
-        # torch.manual_seed(77)
-        # # Exponential distributions for MTBF and MTTR
-        # mtbf_distribution = torch.distributions.Exponential(1 / lambda_mtbf)
-        # mttr_distribution = torch.distributions.Exponential(1 / lambda_mttr)
-        #
-        # # Sample occurrence times and durations
-        # breakdown_occurrence_times = mtbf_distribution.sample((batch_size, num_machines, num_breakdowns))
-        # breakdown_durations = mttr_distribution.sample((batch_size, num_machines, num_breakdowns))
-        #
-        # # Convert occurrence times into cumulative times
-        # cumulative_times = torch.cumsum(breakdown_occurrence_times, dim=-1)
-        #
-        # # Ensure cumulative times stay within max_time
-        # cumulative_times = torch.where(cumulative_times < max_time, cumulative_times, max_time)
-        #
-        # # Randomly decide how many breakdowns occur for each machine
-        # num_actual_breakdowns = torch.randint(
-        #     0, num_breakdowns + 1, (batch_size, num_machines)
-        # )  # Random integer [0, num_breakdowns]
-        #
-        # # Create the final breakdown tensor
-        # breakdowns = torch.zeros(batch_size, num_machines, num_breakdowns * 2)
-        #
-        # for i in range(num_breakdowns):
-        #     # Mask to include only machines that still need more breakdowns
-        #     mask = num_actual_breakdowns > i
-        #
-        #     # Fill occurrence times at even indices
-        #     breakdowns[:, :, i * 2] = torch.where(
-        #         mask, cumulative_times[:, :, i], torch.zeros_like(cumulative_times[:, :, i])
-        #     )
-        #
-        #     # Fill durations at odd indices
-        #     breakdowns[:, :, i * 2 + 1] = torch.where(
-        #         mask, breakdown_durations[:, :, i], torch.zeros_like(breakdown_durations[:, :, i])
-        #     )
-        #
-        # return breakdowns
 
-    ####################################################################################################
 
     # this is the last added simulate_machine_breakdowns
     # to ensure consistency with the environment
@@ -340,48 +301,7 @@ class DJSSPGenerator(Generator):
         return batch_breakdowns
 
 
-    # For simualting machine breakdowns without considering MTBF-MTOL
-    # currently  NOT USED
-    def _simulate_machine_breakdowns(self):
-        # seeds -> currently random numbers
-        time_seed = 8484
-        machine_seed = 1245
-        # RNGenerators
-        from random import random
-        rng_time = random.Random(time_seed)
-        rng_machine = random.Random(machine_seed)
 
-        # TODO- do we really need lower-upper bounds
-        earliest = 0  # earliest time machine-breakdown can occur
-        # TODO: upperbound can be adjusted with the information from the td["time"]
-        # or it can be taken from the jssp instance if the one with the lower-upperbound is given
-        latest = 10000  # latest time machine-breakdown can occur
-
-        # TODO: this variables can be adjusted or replaced with MTBF-MTOL
-        lower_duration_bound = 2
-        upper_duration_bound = 2000
-        machine_breakdowns = {}
-        # machine id's starting from the zero since in ma_assignments adjacency matrix
-        # the machine_id's starting from the zero
-        for machine_idx in range(0, self.num_mas + 1):
-            # number of breakdowns for current machine
-            # currently between 0-3 but can be adjusted
-            num_breakdown = rng_machine.randint(0, 3)
-            # array to save the breakdowns of the machine with ID= machine_idx
-            mac_idx_breakdown = []
-
-            for _ in range(num_breakdown):
-                # occurence time of the breakdown
-                time = rng_time.randint(earliest, latest)
-                # duration of the breakdown
-                duration = rng_machine.randint(lower_duration_bound, upper_duration_bound)
-
-                # save the breakdown
-                mac_idx_breakdown.append({"TIME": time, "DURATION": duration})
-            # Save the breakdowns of the machine in the machine_breakdowns dict
-            machine_breakdowns[machine_idx] = mac_idx_breakdown
-
-        return machine_breakdowns
 
     #  as in many papers, i am going to implement machine breakdowns using the MTBF-MTOL
     # here MTBF and MTTR can be optionally attribute of the environment
@@ -459,23 +379,7 @@ class DJSSPGenerator(Generator):
         # Shape: (bs, number_of_jobs)
         job_arrival_times = torch.cumsum(interarrival_times, dim=-1)
 
-        ################### ORIGINAL ONE ###########################################
-        # job_arrival_times = []
-        # for _ in range(bs[0]):
-        #     exponential_distribution = torch.distributions.Exponential(1 / E_new)
-        #     interarrival_times_between_operations = exponential_distribution.sample(
-        #         (number_of_jobs,)
-        #     )
-        #
-        #     # cumulative sum to calculate the arrival times
-        #     # TODO: here i assummed that jobs are coming one after another
-        #     # but i can code them as totally independent too
-        #     arrival_time = torch.cumsum(interarrival_times_between_operations, 0)
-        #     job_arrival_times.append(arrival_time)
-        # job_arrival_times = torch.stack(job_arrival_times)
-        #######################################################################
         # rounded
-        # return job_arrival_times
         return torch.round(job_arrival_times , decimals= 3)
 
 
@@ -538,7 +442,7 @@ class DJSSPGenerator(Generator):
 
 
 
-        number_of_macimum_breakdowns = 17
+        number_of_macimum_breakdowns = 8
         tensor_shape = (*batch_size, self.num_mas, number_of_macimum_breakdowns *2 )
         machine_breakdown_tensor = torch.zeros(tensor_shape)
         #TODO: NEWLY ADDED MNACHINE BREAKDOWN WITH THE GENERATE MACHINE BREAKDOWNS!

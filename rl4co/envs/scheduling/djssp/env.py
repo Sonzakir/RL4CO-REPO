@@ -130,7 +130,7 @@ class DJSSPEnv(JSSPEnv):
 
         # check machine breakdowns and
         # update td["busy_until"] if necessary
-        td_reset = self._check_machine_breakdowns(td_reset)
+        #td_reset = self._check_machine_breakdowns(td_reset)
 
         # mask the infeasible actions
         td_reset.set("action_mask", self.get_action_mask(td_reset))
@@ -223,31 +223,30 @@ class DJSSPEnv(JSSPEnv):
     #
     #
     #    ##########################################################################################################
-    #     # old version (performance issues with attention model)
-    #     # (bs , num_mas ,  n_max_breakdowns)
-    #     # machine_breakdowns = td["machine_breakdowns"]
-    #     #
-    #     # for batch_id in range(machine_breakdowns.size(0)):
-    #     #     for machine_idx in range(machine_breakdowns.size(1)):
-    #     #         # breakdowns of the machine in the current batch
-    #     #         machine_idx_breakdowns = machine_breakdowns[batch_id,machine_idx]
-    #     #         for breakdown_no in range(int(machine_breakdowns.size(2)/2)):
-    #     #             # 0-2-4-6-8...-> breakdown occurence time
-    #     #             # 1-3-5-7-9...-> breakdown duration
-    #     #             # if current time == machine breakdown time
-    #     #             # if machine_idx_breakdowns[breakdown_no]["TIME"] == td["time"][batch_id]:
-    #     #             if machine_idx_breakdowns[(breakdown_no)*2] == td["time"][batch_id]:
-    #     #                 # duration of the breakdown
-    #     #                 duration = machine_idx_breakdowns[(breakdown_no)*2 +1 ]
-    #     #                 # machine is busy(not available) until -> " current_time + duration of the breakdown"
-    #     #                 td["busy_until"][batch_id][machine_idx] = td["time"][batch_id] + duration
-        ########################################################################################################
-    # old version (performance issues with attention model)
-        #(bs , num_mas ,  n_max_breakdowns)
 
+       # old version (performance issues with attention model)
+       # (bs , num_mas ,  n_max_breakdowns)
+       #machine_breakdowns = td["machine_breakdowns"]
 
-
-
+       #for batch_id in range(machine_breakdowns.size(0)):
+       #   for machine_idx in range(machine_breakdowns.size(1)):
+       #       # breakdowns of the machine in the current batch
+       #       machine_idx_breakdowns = machine_breakdowns[batch_id,machine_idx]
+       #       for breakdown_no in range(int(machine_breakdowns.size(2)/2)):
+       #           # 0-2-4-6-8...-> breakdown occurence time
+       #           # 1-3-5-7-9...-> breakdown duration
+       #           # if current time == machine breakdown time
+       #           # if machine_idx_breakdowns[breakdown_no]["TIME"] == td["time"][batch_id]:
+       #           breakdown_occ_time = machine_idx_breakdowns[(breakdown_no)*2]
+       #           breakdown_end_time = machine_idx_breakdowns[(breakdown_no)*2 +1] +  breakdown_occ_time
+       #           if breakdown_occ_time <= td["time"][batch_id] <= breakdown_end_time:
+       #               if td["busy_until"][batch_id][machine_idx] < td["time"][batch_id]:
+       #                   print(
+       #                       f"we mask this BATCH {batch_id} MACHINE {machine_idx} CURRENT TIME {td['time'][batch_id]}"
+       #                       f" BREAKDOWN START TIME = {breakdown_occ_time}  BREAKDOWN END TIME = {breakdown_end_time}")
+       #                   # machine is busy(not available) until -> " current_time + duration of the breakdown"
+       #                   td["busy_until"][batch_id][machine_idx] = breakdown_end_time
+       #                   print("####################################################################")
         return td
 
 
@@ -441,13 +440,14 @@ class DJSSPEnv(JSSPEnv):
             # breakdown duration
             brk_dur = breakdown_durations[:, breakdown_idx]
 
-            ## # machine is being reapaired
+
+            ## # machine is being repaired
             mask_ttr = torch.le(occ_time,starting_times)  & \
                        torch.lt(starting_times , (occ_time+brk_dur)) & \
                    torch.le(updated_finishing_times , 9999.0)
-#
-            # # # wait until machine is repair
-#
+
+            # wait until machine is repaired
+
             updated_finishing_times = torch.where(
                 mask_ttr,
               updated_finishing_times + (occ_time + brk_dur - starting_times) ,
@@ -457,9 +457,13 @@ class DJSSPEnv(JSSPEnv):
 
             # job interrupt due to machine breakdown during processin
             # Mask for overlapping breakdowns
-            mask = ((starting_times < occ_time) ) & \
-                   (occ_time < updated_finishing_times) & \
-                   (updated_finishing_times < 9999.0)
+            # mask = ((starting_times < occ_time) ) & \
+            #        (occ_time < updated_finishing_times) & \
+            #        (updated_finishing_times < 9999.0)
+
+            mask = (torch.lt(starting_times , occ_time)) & \
+                   torch.lt(occ_time , updated_finishing_times) & \
+                   torch.lt(updated_finishing_times , 9999.0)
 
 
             # Update finishing times where the mask is true
@@ -468,6 +472,7 @@ class DJSSPEnv(JSSPEnv):
                 updated_finishing_times + brk_dur,
                 updated_finishing_times
             )
+
 
         # Write back the updated finish times to the tensor
         finish_times[batch_indices, selected_op] = updated_finishing_times
@@ -502,6 +507,8 @@ class DJSSPEnv(JSSPEnv):
         # #clear_output()
         # render(td,6)
 
+
+
         return td
 #######################################################################################################################
 
@@ -525,6 +532,10 @@ class DJSSPEnv(JSSPEnv):
         # 3.) idle machines can not process any of the not yet scheduled operations
         # 4.) no_op is choosen
         # 5.) a job is arrived
+
+
+        #AssertionError: infeasible action selected
+        #td = self._check_machine_breakdowns(td)
 
         #available_time_ma = td["busy_until"]
         # calculate the earliest time when a machine becomes IDLE again
@@ -684,7 +695,35 @@ class DJSSPEnv(JSSPEnv):
         '''
         batch_size = td.size(0)
         # TODO: CHECK_MACHINE_BREAKDOWNS_GET_JOB_MACHINE_AVAILABILITY
+
+        ######################################################################################################
+        # AssertionError: infeasible action selected
         #td = self._check_machine_breakdowns(td)
+        ###################################################################################
+        #machine_breakdowns = td["machine_breakdowns"]
+#
+        # for batch_id in range(machine_breakdowns.size(0)):
+        #   for machine_idx in range(machine_breakdowns.size(1)):
+        #       # breakdowns of the machine in the current batch
+        #       machine_idx_breakdowns = machine_breakdowns[batch_id, machine_idx]
+        #       for breakdown_no in range(int(machine_breakdowns.size(2) / 2)):
+        #           # 0-2-4-6-8...-> breakdown occurence time
+        #           # 1-3-5-7-9...-> breakdown duration
+        #           # if current time == machine breakdown time
+        #           # if machine_idx_breakdowns[breakdown_no]["TIME"] == td["time"][batch_id]:
+        #
+        #           breakdown_occ_time = machine_idx_breakdowns[(breakdown_no) * 2]
+        #           breakdown_end_time = machine_idx_breakdowns[(breakdown_no) * 2 + 1] + breakdown_occ_time
+        #
+        #           if breakdown_occ_time <= td["time"][batch_id] < breakdown_end_time:
+        #                #  sikinti bence buradan kaynakli oluyor, eger bir tane job dispatchlenmissse ve calisiyorsa
+        #                #  bir sonraki steplerde onun td["time"]'i her türlü daha kücük oluyor.
+        #                # ama daha sonra bir step yapildiginda ve biz tekrar kontrol ettigimizde hali hazirda
+        #                #  busy until olan yer assert oluyoR
+        #               if td["busy_until"][batch_id,machine_idx] < td["time"][batch_id]:
+        #                   td["busy_until"][batch_id,machine_idx] = breakdown_end_time
+
+        ###################################################################################
 
         #(bs, jobs, machines)
         action_mask = torch.full((batch_size, self.num_jobs, self.num_mas), False).to(

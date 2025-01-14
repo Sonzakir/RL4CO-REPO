@@ -207,6 +207,7 @@ class FJSPEnv(EnvBase):
     def _get_job_machine_availability(self, td: TensorDict):
         batch_size = td.size(0)
 
+
         # (bs, jobs, machines)
         action_mask = torch.full((batch_size, self.num_jobs, self.num_mas), False).to(
             td.device
