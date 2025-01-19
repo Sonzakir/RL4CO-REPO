@@ -138,6 +138,7 @@ def _simulate_actual_processing_times(td) -> torch.Tensor:
                 td[i, j, z] = actual_time
     return td
 
+# generate random arrival times for files
 # DYNAMIC JOB ARRIVAL
 def _generate_random_job_arrivals(bs, number_of_jobs, E_new):
     """
@@ -146,18 +147,54 @@ def _generate_random_job_arrivals(bs, number_of_jobs, E_new):
     two successive new job is subjected to exponential distribution with average value Enew
     Average value of interarrival time Enew is 20. `
     """
-    job_arrival_times = []
-    for _ in range(bs):
-        exponential_distribution = torch.distributions.Exponential(1 / E_new)
-        interarrival_times_between_operations = exponential_distribution.sample(
-            (number_of_jobs,)
-        )
+    # Create exponential distribution for interarrival times
+    exponential_distribution = torch.distributions.Exponential(1 / E_new)
+    # Sample interarrival times for all batches and jobs at once
+    # Shape: (bs, number_of_jobs)
+    interarrival_times = exponential_distribution.sample((bs, number_of_jobs))
+    # Compute cumulative arrival times for all jobs in all batches
+    # Shape: (bs, number_of_jobs)
+    job_arrival_times = torch.cumsum(interarrival_times, dim=-1)
+    # rounded
+    return torch.round(job_arrival_times , decimals= 3)
 
-        # cumulative sum to calculate the arrival times
-        # TODO: here i assummed that jobs are coming one after another
-        # but i can code them as totally independent too
-        arrival_time = torch.cumsum(interarrival_times_between_operations, 0)
-        job_arrival_times.append(arrival_time)
-    job_arrival_times = torch.stack(job_arrival_times)
 
-    return job_arrival_times
+def generate_machine_breakdowns(batch_size, num_machines, num_breakdowns, lambda_mtbf, lambda_mttr, max_time=10000):
+    """
+    Generates a tensor representing machine breakdowns.
+    Args:
+        batch_size (int): Number of batches.
+        num_machines (int): Number of machines per batch.
+        num_breakdowns (int): Maximum number of breakdowns per machine.
+        lambda_mtbf (float): Mean time between failures.
+        lambda_mttr (float): Mean time to repair.
+        max_time (int): Maximum simulation time. (upper bound)
+    Returns:
+        torch.Tensor: Shape (batch_size, num_machines, num_breakdowns * 2).
+    """
+    #TODO: In some papers seed are used to ensure reproducibility
+    #torch.manual_seed(90)
+    # Exponential distributions for MTBF and MTTR
+    mtbf_distribution = torch.distributions.Exponential(1 / lambda_mtbf)
+    mttr_distribution = torch.distributions.Exponential(1 / lambda_mttr)
+    # Initialize cumulative times and breakdown tensor
+    cumulative_times = torch.zeros(batch_size, num_machines)  # Tracks the current time per machine
+    breakdowns = torch.zeros(batch_size, num_machines, num_breakdowns,
+                             2)  # To store [occurrence time, repair duration]
+    for i in range(num_breakdowns):
+        # Sample failure occurrence times and repair durations
+        failure_occ_times = mtbf_distribution.sample((batch_size, num_machines))
+        repair_durations = mttr_distribution.sample((batch_size, num_machines))
+        # Advance cumulative time by failure occurrence times
+        cumulative_times += failure_occ_times
+        # Mask to check if the breakdown occurs within max_time
+        valid_mask = cumulative_times < max_time
+        # Record breakdown times and durations only for valid breakdowns
+        breakdowns[:, :, i, 0] = torch.where(valid_mask, cumulative_times, torch.tensor(0.0))
+        breakdowns[:, :, i, 1] = torch.where(valid_mask, repair_durations, torch.tensor(0.0))
+        # Advance cumulative time by repair durations (only for valid breakdowns)
+        cumulative_times += torch.where(valid_mask, repair_durations, torch.tensor(0.0))
+    # Reshape breakdowns tensor to match expected output (batch_size, num_machines, num_breakdowns * 2)
+    breakdowns = breakdowns.reshape(batch_size, num_machines, num_breakdowns * 2)
+    # round the machine breakdowns  this can be adjusted https://pytorch.org/docs/main/generated/torch.round.html
+    return torch.round(breakdowns)

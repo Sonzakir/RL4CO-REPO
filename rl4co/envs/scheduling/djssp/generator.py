@@ -11,7 +11,8 @@ from torch.nn.functional import one_hot
 
 
 from rl4co.envs.common.utils import Generator
-from rl4co.envs.scheduling.djssp.parser import get_max_ops_from_files, read
+from rl4co.envs.scheduling.djssp.parser import get_max_ops_from_files, read, _generate_random_job_arrivals, \
+    generate_machine_breakdowns
 from rl4co.utils.pylogger import get_pylogger
 
 
@@ -35,6 +36,7 @@ class DJSSPGenerator(Generator):
         MACHINE RELATED:
             mtbf: mean time between failures (for machine breakdowns)
             mttr: mean time to repair  (for machine breakdowns)
+            num_breakdowns: maximum number of breakdowns per machine
 
     Returns:
           A TensorDict with the following key:
@@ -63,6 +65,7 @@ class DJSSPGenerator(Generator):
         one2one_ma_map: bool = True,
         mtbf: int = 20,
         mttr: int = 3,
+        num_breakdowns: int = 6, # default we set number of breakdowns per machine 6 
         **unused_kwargs: object,
     ) -> object:
         super().__init__(**unused_kwargs)
@@ -77,8 +80,8 @@ class DJSSPGenerator(Generator):
         # DYNAMIC ATTRIBUTES
         self.mtbf = mtbf
         self.mttr = mttr
+        self.num_breakdowns = num_breakdowns
 
-        #TODO: delete this
 
         if self.one2one_ma_map:
             assert self.min_ops_per_job == self.max_ops_per_job == self.num_mas
@@ -303,62 +306,7 @@ class DJSSPGenerator(Generator):
 
 
 
-    #  as in many papers, i am going to implement machine breakdowns using the MTBF-MTOL
-    # here MTBF and MTTR can be optionally attribute of the environment
-    # non-chronological : machine sorted version
-    # from the real time scheduling in job manufacturing paper
-    def _simulate_machine_breakdowns_with_mtbf_mttr(self, bs, lambda_mtbf, lambda_mttr):
-        assert (
-            self.max_processing_time >= lambda_mtbf
-        ), "MTBF cannot be greater than maximum processing time"
-        assert (
-            self.max_processing_time >= lambda_mttr
-        ), "MTTR cannot be greater than maximum processing time"
-        # The mean time between failure and mean time off line subject to exponential distribution
-        # (from E.S) assumin that MTBF-MTTR obey the exponential distribution
-        # or we can use torch.Tensor.exponential_ in here to
-        # TODO: what is the really difference ???
-        mtbf_distribtuion = torch.distributions.Exponential(1 / lambda_mtbf)
-        mttr_distribution = torch.distributions.Exponential(1 / lambda_mttr)
-        # In some papers seed are used to ensure reproducibility
-        torch.manual_seed(seed=77)
 
-        # In two paper Machine Failure Time Percentage is used but i dont understand the purpose of it
-        MFTp = lambda_mttr / (lambda_mttr + lambda_mtbf)
-
-        # [batch_number]  [breakdowns of the machine in the batch]
-        batch_breakdowns = []
-        for _ in range(bs[0]):
-            # machine_idx_sorted version
-            # [machine_idx, occurence_time , duration]
-            breakdowns = {}
-
-            for machine_idx in range(0, self.num_mas):
-
-                current_time = 0
-
-                machine_idx_breakdowns = []
-                while current_time < self.max_processing_time:
-
-                    # machine failure occurence time
-                    failure_occ_time = mtbf_distribtuion.sample().item() + current_time
-                    failure_occ_time = mtbf_distribtuion.sample().item() + current_time
-                    # advance time
-                    current_time += failure_occ_time
-                    # the machine repair time
-                    machine_repair_time = mttr_distribution.sample().item()
-                    # machine cannot break again, while being repaired -> therefore advance the time
-                    current_time += machine_repair_time
-
-                    # still, current time must be less than max_processing time
-                    if self.max_processing_time >= current_time:
-                        machine_idx_breakdowns.append(
-                            {"TIME": failure_occ_time, "DURATION": machine_repair_time}
-                        )
-                    breakdowns[machine_idx] = machine_idx_breakdowns
-
-            batch_breakdowns.append(breakdowns)
-        return batch_breakdowns
 
     # DYNAMIC JOB ARRIVAL
     def _generate_random_job_arrivals(self, bs, number_of_jobs, E_new):
@@ -441,14 +389,12 @@ class DJSSPGenerator(Generator):
 
 
 
-
-        number_of_macimum_breakdowns = 8
-        tensor_shape = (*batch_size, self.num_mas, number_of_macimum_breakdowns *2 )
+        tensor_shape = (*batch_size, self.num_mas, self.num_breakdowns *2 )
         machine_breakdown_tensor = torch.zeros(tensor_shape)
         #TODO: NEWLY ADDED MNACHINE BREAKDOWN WITH THE GENERATE MACHINE BREAKDOWNS!
         machine_breakdown_tensor = self.generate_machine_breakdowns(batch_size= batch_size[0],
                                                                     num_machines= self.num_mas,
-                                                                    num_breakdowns= number_of_macimum_breakdowns,
+                                                                    num_breakdowns= self.num_breakdowns,
                                                                     lambda_mtbf= self.mtbf,
                                                                     lambda_mttr=self.mttr,
                                                                     max_time=10000
@@ -547,21 +493,38 @@ class DJSSPFileGenerator(Generator):
         if self.start_idx >= self.num_samples:
             self.start_idx = 0
 
+
+        #TODO: do we need to add dynamic events in JSSP File
         ## Add dynamic attributes
-        #E_new = 20  # Average inter-arrival time
-        #job_arrival_times = self._generate_random_job_arrivals(batch_size=(batch_size,),
-        #                                                       number_of_jobs=self.num_jobs,
-        #                                                       E_new=E_new)
-        #machine_breakdowns = self._simulate_machine_breakdowns_with_mtbf_mttr(
-        #    bs=(batch_size,), lambda_mtbf=20, lambda_mttr=3
-        #)
-#
-        #    # Update TensorDict with dynamic keys
-        ## Add the dynamic keys
-        #td = td.update({
-        #    "job_arrival_times": job_arrival_times,
-        #    "machine_breakdowns": machine_breakdowns
-        #})
+        # dynamic job arrival_times :torch Tensor
+        # shape : ( batch_size ,num_jobs)
+
+        """
+        Do we need to add job_arrival_times in taillard instance files ? 
+        """
+        #job_arrival_times = _generate_random_job_arrivals(
+        #                                                   bs= batch_size,
+        #                                                   number_of_jobs=self.num_jobs,
+        #                                                   E_new=20
+        #                                                   )
+        job_arrival_times = torch.zeros((batch_size , self.num_jobs))
+
+        #machine_breakdowns = generate_machine_breakdowns(batch_size=batch_size,
+        #                                                            num_machines=self.num_mas,
+        #                                                            num_breakdowns=10,  # TODO: fixed number of breakdowns
+        #                                                            lambda_mtbf=100,    # TODO: fixed mtbf
+        #                                                            lambda_mttr=50,     # TODO: fixed mttr
+        #                                                            max_time=10000
+        #                                                            )
+        machine_breakdowns = torch.zeros((batch_size , self.num_mas , 2))
+
+
+           # Update TensorDict with dynamic keys
+        # Add the dynamic keys
+        td = td.update({
+           "job_arrival_times": job_arrival_times,
+           "machine_breakdowns": machine_breakdowns
+        })
 
         return td
 

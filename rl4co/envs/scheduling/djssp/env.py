@@ -1,7 +1,6 @@
 import collections
 import os
 
-from IPython.core.display_functions import clear_output
 from ortools.sat.python import cp_model
 from torchrl.data import Composite, Unbounded, Bounded
 
@@ -309,28 +308,22 @@ class DJSSPEnv(JSSPEnv):
         ma = gather_by_index(td["ops_ma_adj"], op.unsqueeze(1), dim=2).nonzero()[:, 1]
         return job, op, ma
 
-    @staticmethod
-    def list_files(path):
-        files = [
-            os.path.join(path, f)
-            for f in os.listdir(path)
-            if os.path.isfile(os.path.join(path, f))
-        ]
-        assert len(files) > 0, "No files found in the specified path"
-        return files
+
 
 
     def _step(self, td: TensorDict):
-
+        
         # cloning required to avoid inplace operation which avoids gradient backtracking
         td = td.clone()
 
+        # 1- Retrieve the input keys
         td["action"].subtract_(1)
 
         # (bs)
         dones = td["done"].squeeze(1)
 
         # specify which batch instances require which operation
+        # batch instance that do not require action
         no_op = td["action"].eq(NO_OP_ID)
         no_op = no_op & ~dones
         req_op = ~no_op & ~dones
@@ -342,10 +335,15 @@ class DJSSPEnv(JSSPEnv):
         # select only instances that perform a scheduling action
         td_op = td.masked_select(req_op)
 
+        # 2- Execute Simulation (Write new observations)
         td_op = self._make_step(td_op)
+        
+        # 3- Write new observations
         # update the tensordict
         td[req_op] = td_op
 
+        # set the action mask for the state of EACH batch AFTER make_step
+        #TODO: masking machine breakdowns should be implemented in here (HOWEVER LOGIC PROBLEM IS HARD)
         # action mask
         td.set("action_mask", self.get_action_mask(td))
 
@@ -447,7 +445,6 @@ class DJSSPEnv(JSSPEnv):
                    torch.le(updated_finishing_times , 9999.0)
 
             # wait until machine is repaired
-
             updated_finishing_times = torch.where(
                 mask_ttr,
               updated_finishing_times + (occ_time + brk_dur - starting_times) ,
@@ -455,12 +452,7 @@ class DJSSPEnv(JSSPEnv):
             )
 
 
-            # job interrupt due to machine breakdown during processin
-            # Mask for overlapping breakdowns
-            # mask = ((starting_times < occ_time) ) & \
-            #        (occ_time < updated_finishing_times) & \
-            #        (updated_finishing_times < 9999.0)
-
+            # job interrupt due to machine breakdown during processing
             mask = (torch.lt(starting_times , occ_time)) & \
                    torch.lt(occ_time , updated_finishing_times) & \
                    torch.lt(updated_finishing_times , 9999.0)
@@ -506,11 +498,17 @@ class DJSSPEnv(JSSPEnv):
         # Alternatively, these two lines can be used to render the environment at each step
         # #clear_output()
         # render(td,6)
-
-
-
         return td
-#######################################################################################################################
+
+    @staticmethod
+    def list_files(path):
+        files = [
+            os.path.join(path, f)
+            for f in os.listdir(path)
+            if os.path.isfile(os.path.join(path, f))
+        ]
+        assert len(files) > 0, "No files found in the specified path"
+        return files
 
 
 
@@ -589,86 +587,7 @@ class DJSSPEnv(JSSPEnv):
 
     #######################################################################################################################
 
-    # TODO: add job arrival_times here
-    def _make_spec(self, generator: DJSSPGenerator):
-        self.observation_spec = Composite(
-            time=Unbounded(
-                shape=(1,),
-                dtype=torch.int64,
-            ),
-            next_op=Unbounded(
-                shape=(self.num_jobs,),
-                dtype=torch.int64,
-            ),
-            proc_times=Unbounded(
-                shape=(self.num_mas, self.n_ops_max),
-                dtype=torch.float32,
-            ),
-            pad_mask=Unbounded(
-                shape=(self.num_mas, self.n_ops_max),
-                dtype=torch.bool,
-            ),
-            start_op_per_job=Unbounded(
-                shape=(self.num_jobs,),
-                dtype=torch.bool,
-            ),
-            end_op_per_job=Unbounded(
-                shape=(self.num_jobs,),
-                dtype=torch.bool,
-            ),
-            start_times=Unbounded(
-                shape=(self.n_ops_max,),
-                dtype=torch.int64,
-            ),
-            finish_times=Unbounded(
-                shape=(self.n_ops_max,),
-                dtype=torch.int64,
-            ),
-            job_ops_adj=Unbounded(
-                shape=(self.num_jobs, self.n_ops_max),
-                dtype=torch.int64,
-            ),
-            ops_job_map=Unbounded(
-                shape=(self.n_ops_max),
-                dtype=torch.int64,
-            ),
-            ops_sequence_order=Unbounded(
-                shape=(self.n_ops_max),
-                dtype=torch.int64,
-            ),
-            ma_assignment=Unbounded(
-                shape=(self.num_mas, self.n_ops_max),
-                dtype=torch.int64,
-            ),
-            busy_until=Unbounded(
-                shape=(self.num_mas,),
-                dtype=torch.int64,
-            ),
-            num_eligible=Unbounded(
-                shape=(self.n_ops_max,),
-                dtype=torch.int64,
-            ),
-            job_in_process=Unbounded(
-                shape=(self.num_jobs,),
-                dtype=torch.bool,
-            ),
-            job_done=Unbounded(
-                shape=(self.num_jobs,),
-                dtype=torch.bool,
-            ),
-            machine_breakdowns=Unbounded(
-                shape=(),  #for now ()
-            ),
-            shape=(),
-        )
-        self.action_spec = Bounded(
-            shape=(1,),
-            dtype=torch.int64,
-            low=-1,
-            high=self.n_ops_max,
-        )
-        self.reward_spec = Unbounded(shape=(1,))
-        self.done_spec = Unbounded(shape=(1,), dtype=torch.bool)
+
 
 
     @staticmethod
@@ -701,7 +620,7 @@ class DJSSPEnv(JSSPEnv):
         #td = self._check_machine_breakdowns(td)
         ###################################################################################
         #machine_breakdowns = td["machine_breakdowns"]
-#
+        # checking machine breakdowns with a for loop
         # for batch_id in range(machine_breakdowns.size(0)):
         #   for machine_idx in range(machine_breakdowns.size(1)):
         #       # breakdowns of the machine in the current batch
@@ -754,55 +673,6 @@ class DJSSPEnv(JSSPEnv):
 
         return action_mask
 
-    def _simulate_machine_breakdowns_(self, td, lambda_mtbf, lambda_mttr):
-
-        # The mean time between failure and mean time off line subject to exponential distribution
-        # (from E.S) assumin that MTBF-MTTR obey the exponential distribution
-        # NOTE:  we can use torch.Tensor.exponential_ in here too
-        mtbf_distribtuion = torch.distributions.Exponential(1 / lambda_mtbf)
-        mttr_distribution = torch.distributions.Exponential(1 / lambda_mttr)
-        # In some papers seed are used to ensure reproducibility
-        torch.manual_seed(seed=77)
-
-        # In two paper Machine Failure Time Percentage is used but i dont understand the purpose of it
-        MFTp = lambda_mttr / (lambda_mttr + lambda_mtbf)
-
-
-        # [batch_number]  [breakdowns of the machine in the batch]
-        batch_breakdowns = []
-        for _ in range(td.size(0)):
-            # machine_idx_sorted version
-            # [machine_idx, occurence_time , duration]
-            breakdowns = {}
-
-            for machine_idx in range(0, self.num_mas):
-
-                current_time = 0
-
-                machine_idx_breakdowns = []
-                # harcoded maximal processing time !!!
-                while current_time < 10000:
-
-                    # machine failure occurence time
-                    failure_occ_time = mtbf_distribtuion.sample().item() + current_time
-                    failure_occ_time = mtbf_distribtuion.sample().item() + current_time
-                    # advance time
-                    current_time += failure_occ_time
-                    # the machine repair time
-                    machine_repair_time = mttr_distribution.sample().item()
-                    # machine cannot break again, while being repaired -> therefore advance the time
-                    current_time += machine_repair_time
-
-                    # still, current time must be less than max_processing time
-                    if 10000 >= current_time:
-                        machine_idx_breakdowns.append(
-                            {"TIME": failure_occ_time, "DURATION": machine_repair_time}
-                        )
-                    breakdowns[machine_idx] = machine_idx_breakdowns
-
-            batch_breakdowns.append(breakdowns)
-        return batch_breakdowns
-
 
     @staticmethod
     def render(td, idx):
@@ -810,132 +680,6 @@ class DJSSPEnv(JSSPEnv):
 
     def select_start_nodes(self, td: TensorDict, num_starts: int):
         return sample_n_random_actions(td, num_starts)
-
-
-
-
-    # When we want to model machine breakdowns using nd_array we can use this method
-    def nd_array_check_machine_breakdowns(self, td: TensorDict ):
-        """
-            Method to check for machine breakdowns in the environment.
-
-            Args:
-                td: The state of the environment at the current time step (td["time"]).
-
-            Returns:
-                The updated td with the modified td["busy_until"] entry.
-                If a machine has a breakdown at the current time step (td["time"])
-                -> the "busy_until" entry for that machine is adjusted to the time step when the machine is repaired.
-        """
-
-        # breakdown of all machines in all bathces
-        machine_breakdowns = td["machine_breakdowns"]
-
-        # for batch_id in range(batch_size):
-        for batch_id in range(len(machine_breakdowns)):
-            for machine_idx in range(self.num_mas):
-                # breakdowns of the machine in the current batch
-                machine_idx_breakdowns = machine_breakdowns[batch_id][machine_idx]
-                for breakdown_no in range(len(machine_idx_breakdowns)):
-                    # if current time == machine breakdown time
-                    if machine_idx_breakdowns[breakdown_no]["TIME"] == td["time"][batch_id]:
-                        # duration of the breakdown
-                        duration = machine_idx_breakdowns[breakdown_no]["DURATION"]
-                        # machine is busy(not available) until -> " current_time + duration of the breakdown"
-                        td["busy_until"][batch_id][machine_idx] = td["time"][batch_id] + duration
-        return td
-
-    def nd_array_make_step(self, td: TensorDict) -> TensorDict:
-
-        """
-        Use this make_step method only when you model the machine breakdowns as np.ndarray
-        """
-
-        batch_idx = torch.arange(td.size(0))
-
-        # 3*(#req_op)
-        selected_job, selected_op, selected_machine = self._translate_action(td)
-
-        # mark job as being processed
-        td["job_in_process"][batch_idx, selected_job] = 1
-
-        # mark op as schedules
-        td["op_scheduled"][batch_idx, selected_op] = True
-
-        # update machine state
-        proc_time_of_action = td["proc_times"][batch_idx, selected_machine, selected_op]
-        # we may not select a machine that is busy
-        assert torch.all(td["busy_until"][batch_idx, selected_machine] <= td["time"])
-
-        # update schedule
-        td["start_times"][batch_idx, selected_op] = td["time"]
-        td["finish_times"][batch_idx, selected_op] = td["time"] + proc_time_of_action
-
-        td["ma_assignment"][batch_idx, selected_machine, selected_op] = 1
-        # update the state of the selected machine
-        td["busy_until"][batch_idx, selected_machine] = td["time"] + proc_time_of_action
-
-        # machine breakdown during processing
-        """
-            Job Interrupt Check
-            If there is a machine breakdown in time interval [td["start_times"] - td["finish_times"]]
-                Then td["finish_times"] = td["finish_times"] + machine repair time
-        """
-
-
-        for batch_no in range(len(td["machine_breakdowns"])):
-            selected_machine_of_the_batch = selected_machine[batch_no].item()
-            selected_operation_of_the_batch = selected_op[batch_no].item()
-            breakdowns_of_machine = td["machine_breakdowns"][batch_no][selected_machine_of_the_batch]
-            # iterate over each breakdown of the machine
-            for breakdown_no in range(len(breakdowns_of_machine)):
-                # breakdown occurence time
-                breakdown_time = breakdowns_of_machine[breakdown_no]["TIME"]
-                breakdown_duration = breakdowns_of_machine[breakdown_no]["DURATION"]
-                starting_time_of_operation = td["start_times"][batch_no,selected_operation_of_the_batch].item()
-                finishing_time_of_operation = td["finish_times"][batch_no,selected_operation_of_the_batch].item()
-                # if during operation processing a machine breakdown occurs -> wait until machine is repaired
-                # and then process the operation
-                # TODO: DO WE HAVE TO ADD <= 9999.0 in here
-                if((starting_time_of_operation < breakdown_time < finishing_time_of_operation) and (finishing_time_of_operation<9999.0000)):
-                    # repairing time of the machine during execution is added
-                    # print("before", td["finish_times"][batch_no,selected_operation_of_the_batch])
-                    td["finish_times"][batch_no,selected_operation_of_the_batch] += breakdown_duration
-                    # print("after", td["finish_times"][batch_no,selected_operation_of_the_batch])
-                    # todo: check if this correctly calculates the finish time s yani eski finish time'i mi aliyor yenisini mi
-                    td["busy_until"][batch_no,selected_machine_of_the_batch] = td["finish_times"][batch_no,selected_operation_of_the_batch]
-                    # print("THIS OPERATION", selected_operation_of_the_batch)
-
-
-        # removed before job interrupt check
-        # td["ma_assignment"][batch_idx, selected_machine, selected_op] = 1
-        # # update the state of the selected machine
-        # td["busy_until"][batch_idx, selected_machine] = td["time"] + proc_time_of_action
-        # update adjacency matrices (remove edges)
-        td["proc_times"] = td["proc_times"].scatter(
-            2,
-            selected_op[:, None, None].expand(-1, self.num_mas, 1),
-            torch.zeros_like(td["proc_times"]),
-        )
-        td["ops_ma_adj"] = td["proc_times"].contiguous().gt(0).to(torch.float32)
-        td["num_eligible"] = torch.sum(td["ops_ma_adj"], dim=1)
-        # update the positions of an operation in the job (subtract 1 from each operation of the selected job)
-        td["ops_sequence_order"] = (
-            td["ops_sequence_order"] - gather_by_index(td["job_ops_adj"], selected_job, 1)
-        ).clip(0)
-        # some checks
-        # assert torch.allclose(
-        #     td["proc_times"].sum(1).gt(0).sum(1),  # num ops with eligible machine
-        #     (~(td["op_scheduled"] + td["pad_mask"])).sum(1),  # num unscheduled ops
-        # )
-
-        # Alternatively, these two lines can be used to render the environment at each step
-
-        # #clear_output()
-        # render(td,6)
-
-        return td
-
 
     def get_op_ma_proctime(self,td):
         """
@@ -1197,7 +941,241 @@ class DJSSPEnv(JSSPEnv):
         else:
             print("No solution found.")
 
+        # TODO: add job arrival_times here
 
+    def _make_spec(self, generator: DJSSPGenerator):
+        self.observation_spec = Composite(
+            time=Unbounded(
+                shape=(1,),
+                dtype=torch.int64,
+            ),
+            next_op=Unbounded(
+                shape=(self.num_jobs,),
+                dtype=torch.int64,
+            ),
+            proc_times=Unbounded(
+                shape=(self.num_mas, self.n_ops_max),
+                dtype=torch.float32,
+            ),
+            pad_mask=Unbounded(
+                shape=(self.num_mas, self.n_ops_max),
+                dtype=torch.bool,
+            ),
+            start_op_per_job=Unbounded(
+                shape=(self.num_jobs,),
+                dtype=torch.bool,
+            ),
+            end_op_per_job=Unbounded(
+                shape=(self.num_jobs,),
+                dtype=torch.bool,
+            ),
+            start_times=Unbounded(
+                shape=(self.n_ops_max,),
+                dtype=torch.int64,
+            ),
+            finish_times=Unbounded(
+                shape=(self.n_ops_max,),
+                dtype=torch.int64,
+            ),
+            job_ops_adj=Unbounded(
+                shape=(self.num_jobs, self.n_ops_max),
+                dtype=torch.int64,
+            ),
+            ops_job_map=Unbounded(
+                shape=(self.n_ops_max),
+                dtype=torch.int64,
+            ),
+            ops_sequence_order=Unbounded(
+                shape=(self.n_ops_max),
+                dtype=torch.int64,
+            ),
+            ma_assignment=Unbounded(
+                shape=(self.num_mas, self.n_ops_max),
+                dtype=torch.int64,
+            ),
+            busy_until=Unbounded(
+                shape=(self.num_mas,),
+                dtype=torch.int64,
+            ),
+            num_eligible=Unbounded(
+                shape=(self.n_ops_max,),
+                dtype=torch.int64,
+            ),
+            job_in_process=Unbounded(
+                shape=(self.num_jobs,),
+                dtype=torch.bool,
+            ),
+            job_done=Unbounded(
+                shape=(self.num_jobs,),
+                dtype=torch.bool,
+            ),
+            machine_breakdowns=Unbounded(
+                shape=(),  # for now ()
+            ),
+            shape=(),
+        )
+        self.action_spec = Bounded(
+            shape=(1,),
+            dtype=torch.int64,
+            low=-1,
+            high=self.n_ops_max,
+        )
+        self.reward_spec = Unbounded(shape=(1,))
+        self.done_spec = Unbounded(shape=(1,), dtype=torch.bool)
+
+
+    def _simulate_machine_breakdowns_(self, td, lambda_mtbf, lambda_mttr):
+
+        # The mean time between failure and mean time off line subject to exponential distribution
+        # (from E.S) assumin that MTBF-MTTR obey the exponential distribution
+        # NOTE:  we can use torch.Tensor.exponential_ in here too
+        mtbf_distribtuion = torch.distributions.Exponential(1 / lambda_mtbf)
+        mttr_distribution = torch.distributions.Exponential(1 / lambda_mttr)
+        # In some papers seed are used to ensure reproducibility
+        torch.manual_seed(seed=77)
+
+        # In two paper Machine Failure Time Percentage is used but i dont understand the purpose of it
+        MFTp = lambda_mttr / (lambda_mttr + lambda_mtbf)
+
+
+        # [batch_number]  [breakdowns of the machine in the batch]
+        batch_breakdowns = []
+        for _ in range(td.size(0)):
+            # machine_idx_sorted version
+            # [machine_idx, occurence_time , duration]
+            breakdowns = {}
+
+            for machine_idx in range(0, self.num_mas):
+
+                current_time = 0
+
+                machine_idx_breakdowns = []
+                # harcoded maximal processing time !!!
+                while current_time < 10000:
+
+                    # machine failure occurence time
+                    failure_occ_time = mtbf_distribtuion.sample().item() + current_time
+                    failure_occ_time = mtbf_distribtuion.sample().item() + current_time
+                    # advance time
+                    current_time += failure_occ_time
+                    # the machine repair time
+                    machine_repair_time = mttr_distribution.sample().item()
+                    # machine cannot break again, while being repaired -> therefore advance the time
+                    current_time += machine_repair_time
+
+                    # still, current time must be less than max_processing time
+                    if 10000 >= current_time:
+                        machine_idx_breakdowns.append(
+                            {"TIME": failure_occ_time, "DURATION": machine_repair_time}
+                        )
+                    breakdowns[machine_idx] = machine_idx_breakdowns
+
+            batch_breakdowns.append(breakdowns)
+        return batch_breakdowns
+
+    # When we want to model machine breakdowns using nd_array we can use this method
+    def nd_array_check_machine_breakdowns(self, td: TensorDict):
+        """
+            Method to check for machine breakdowns in the environment.
+            Args:
+                td: The state of the environment at the current time step (td["time"]).
+            Returns:
+                The updated td with the modified td["busy_until"] entry.
+                If a machine has a breakdown at the current time step (td["time"])
+                -> the "busy_until" entry for that machine is adjusted to the time step when the machine is repaired.
+        """
+        # breakdown of all machines in all bathces
+        machine_breakdowns = td["machine_breakdowns"]
+        # for batch_id in range(batch_size):
+        for batch_id in range(len(machine_breakdowns)):
+            for machine_idx in range(self.num_mas):
+                # breakdowns of the machine in the current batch
+                machine_idx_breakdowns = machine_breakdowns[batch_id][machine_idx]
+                for breakdown_no in range(len(machine_idx_breakdowns)):
+                    # if current time == machine breakdown time
+                    if machine_idx_breakdowns[breakdown_no]["TIME"] == td["time"][batch_id]:
+                        # duration of the breakdown
+                        duration = machine_idx_breakdowns[breakdown_no]["DURATION"]
+                        # machine is busy(not available) until -> " current_time + duration of the breakdown"
+                        td["busy_until"][batch_id][machine_idx] = td["time"][batch_id] + duration
+        return td
+
+    def nd_array_make_step(self, td: TensorDict) -> TensorDict:
+        """
+        Use this make_step method only when you model the machine breakdowns as np.ndarray
+        """
+        batch_idx = torch.arange(td.size(0))
+        # 3*(#req_op)
+        selected_job, selected_op, selected_machine = self._translate_action(td)
+        # mark job as being processed
+        td["job_in_process"][batch_idx, selected_job] = 1
+        # mark op as schedules
+        td["op_scheduled"][batch_idx, selected_op] = True
+        # update machine state
+        proc_time_of_action = td["proc_times"][batch_idx, selected_machine, selected_op]
+        # we may not select a machine that is busy
+        assert torch.all(td["busy_until"][batch_idx, selected_machine] <= td["time"])
+        # update schedule
+        td["start_times"][batch_idx, selected_op] = td["time"]
+        td["finish_times"][batch_idx, selected_op] = td["time"] + proc_time_of_action
+        td["ma_assignment"][batch_idx, selected_machine, selected_op] = 1
+        # update the state of the selected machine
+        td["busy_until"][batch_idx, selected_machine] = td["time"] + proc_time_of_action
+        # machine breakdown during processing
+        """
+            Job Interrupt Check
+            If there is a machine breakdown in time interval [td["start_times"] - td["finish_times"]]
+                Then td["finish_times"] = td["finish_times"] + machine repair time
+        """
+        for batch_no in range(len(td["machine_breakdowns"])):
+            selected_machine_of_the_batch = selected_machine[batch_no].item()
+            selected_operation_of_the_batch = selected_op[batch_no].item()
+            breakdowns_of_machine = td["machine_breakdowns"][batch_no][selected_machine_of_the_batch]
+            # iterate over each breakdown of the machine
+            for breakdown_no in range(len(breakdowns_of_machine)):
+                # breakdown occurence time
+                breakdown_time = breakdowns_of_machine[breakdown_no]["TIME"]
+                breakdown_duration = breakdowns_of_machine[breakdown_no]["DURATION"]
+                starting_time_of_operation = td["start_times"][batch_no, selected_operation_of_the_batch].item()
+                finishing_time_of_operation = td["finish_times"][batch_no, selected_operation_of_the_batch].item()
+                # if during operation processing a machine breakdown occurs -> wait until machine is repaired
+                # and then process the operation
+                # TODO: DO WE HAVE TO ADD <= 9999.0 in here
+                if ((starting_time_of_operation < breakdown_time < finishing_time_of_operation) and (
+                        finishing_time_of_operation < 9999.0000)):
+                    # repairing time of the machine during execution is added
+                    # print("before", td["finish_times"][batch_no,selected_operation_of_the_batch])
+                    td["finish_times"][batch_no, selected_operation_of_the_batch] += breakdown_duration
+                    # print("after", td["finish_times"][batch_no,selected_operation_of_the_batch])
+                    # todo: check if this correctly calculates the finish time s yani eski finish time'i mi aliyor yenisini mi
+                    td["busy_until"][batch_no, selected_machine_of_the_batch] = td["finish_times"][
+                        batch_no, selected_operation_of_the_batch]
+                    # print("THIS OPERATION", selected_operation_of_the_batch)
+        # removed before job interrupt check
+        # td["ma_assignment"][batch_idx, selected_machine, selected_op] = 1
+        # # update the state of the selected machine
+        # td["busy_until"][batch_idx, selected_machine] = td["time"] + proc_time_of_action
+        # update adjacency matrices (remove edges)
+        td["proc_times"] = td["proc_times"].scatter(
+            2,
+            selected_op[:, None, None].expand(-1, self.num_mas, 1),
+            torch.zeros_like(td["proc_times"]),
+        )
+        td["ops_ma_adj"] = td["proc_times"].contiguous().gt(0).to(torch.float32)
+        td["num_eligible"] = torch.sum(td["ops_ma_adj"], dim=1)
+        # update the positions of an operation in the job (subtract 1 from each operation of the selected job)
+        td["ops_sequence_order"] = (
+                td["ops_sequence_order"] - gather_by_index(td["job_ops_adj"], selected_job, 1)
+        ).clip(0)
+        # some checks
+        # assert torch.allclose(
+        #     td["proc_times"].sum(1).gt(0).sum(1),  # num ops with eligible machine
+        #     (~(td["op_scheduled"] + td["pad_mask"])).sum(1),  # num unscheduled ops
+        # )
+        # Alternatively, these two lines can be used to render the environment at each step
+        # #clear_output()
+        # render(td,6)
+        return td
 
 
 
